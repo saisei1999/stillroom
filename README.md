@@ -12,4 +12,3 @@ Start with [product](docs/product.md), [design and screens](docs/design.md), [ar
 
 Not implemented: persistent library, add/edit, metadata search, artwork, tracking, export/import, offline app shell, collections, statistics, accessibility audit, and end-to-end tests. Do not use this preview to store personal data.
 
-
