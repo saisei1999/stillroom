@@ -1,6 +1,6 @@
 # Stillroom (working title)
 
-A local-first, personal media library: cover-forward browsing with quick tracking and portable data. This repository is **prepared for implementation**, not a finished app. The current screen is a static, clearly labeled design preview with sample search, tag and filter controls, and a profile menu; sample entries are not saved.
+A local-first, personal media library: cover-forward browsing with quick tracking and portable data. This repository is **prepared for implementation**, not a finished app. The app supports manual entries stored locally in IndexedDB, with status, ratings, tags, notes and progress. Data remains in the same browser and device; browser data clearing or storage eviction can remove it. Export backups regularly.
 
 ## Run
 
@@ -10,5 +10,5 @@ Start with [product](docs/product.md), [design and screens](docs/design.md), [ar
 
 ## Status
 
-Not implemented: persistent library, add/edit, metadata search, artwork, tracking, export/import, offline app shell, collections, statistics, accessibility audit, and end-to-end tests. Do not use this preview to store personal data.
+Implemented: manual create/edit/delete, local persistence, status, quick rating, tags, text progress, notes, and versioned JSON export/restore. Restore replaces the current library after confirmation. Not implemented: metadata search, cover uploads, numeric progress controls, Markdown export, offline app shell, cross-device sync, collections, statistics, accessibility audit, and end-to-end tests. Storage is tied to the site origin: localhost and GitHub Pages have separate libraries.
 
