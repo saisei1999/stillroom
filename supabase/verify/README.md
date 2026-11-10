@@ -5,6 +5,7 @@ Two independent checks live here:
 | Script | What it proves | Needs |
 | --- | --- | --- |
 | `pg-local-verify.mjs` | Runs the **real migration SQL** against a real PostgreSQL engine (PGlite/WASM): preflight, `0001` applies, `0002` audit, RPC create/update/conflict/idempotency, tombstones + resurrection, skip-free `sync_seq` paging, anon denial, cross-account isolation, rollback. 28 checks. | `npm install --no-save --ignore-scripts @electric-sql/pglite`, then `node supabase/verify/pg-local-verify.mjs` from the repo root. No network, no real project. |
+| `pg-refusal-verify.mjs` | The migration **fails closed**: it refuses a table that already has `revision`/`deleted`, a table missing `payload`, a partial key with duplicate `(owner_id, id)` rows, an unexplained extra grantee, and a re-apply over an existing install — and leaves the schema untouched when it refuses. 7 checks. | Same PGlite install; `node supabase/verify/pg-refusal-verify.mjs`. |
 | `authorization.mjs` | The live two-account gate against the **hosted project** (browser-facing surface: publishable key + user JWT). | The env vars below, after the migration is applied. |
 
 `pg-local-verify.mjs` is a strong check of the SQL itself but it is **not**

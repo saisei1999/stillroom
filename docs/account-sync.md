@@ -66,14 +66,19 @@ Draft pull request: https://github.com/saisei1999/stillroom/pull/1
 
 ### Still required before enabling
 1. **Supabase production is still unverified.** The SQL has now been *executed
-   locally against a real PostgreSQL engine* (PGlite/WASM) via
+   locally against a real PostgreSQL engine* (PGlite/WASM):
    `supabase/verify/pg-local-verify.mjs` — 28/28 checks, covering preflight,
    `0001` applying, the `0002` audit, create/update/conflict/idempotency,
    tombstones and resurrection, skip-free `sync_seq` paging across tied
-   timestamps, anon denial, cross-account isolation, and the rollback. That is
-   strong evidence about the SQL, but there is still no GoTrue, no PostgREST and
-   no Supabase-managed roles locally, so the hosted project must be exercised
-   once (preflight, then `0001`, then `0002`).
+   timestamps, anon denial, cross-account isolation, and the rollback — and
+   `supabase/verify/pg-refusal-verify.mjs` — 7/7 checks proving the migration
+   *fails closed*: it refuses a table that already has `revision`/`deleted`, a
+   table missing `payload`, a partial key with duplicate `(owner_id, id)` rows,
+   an unexplained extra grantee, and a re-apply over an existing install, leaving
+   the schema untouched each time. That is strong evidence about the SQL, but
+   there is still no GoTrue, no PostgREST and no Supabase-managed roles locally,
+   so the hosted project must be exercised once (preflight, then `0001`, then
+   `0002`).
 2. **The live two-account gate has not passed.** Run
    `supabase/verify/authorization.mjs` against the hosted project after applying
    the migration. A missing function returning 404 is not an authorization pass.
