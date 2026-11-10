@@ -54,17 +54,24 @@ Verified in this repo: `npm test` passes (143 tests) and `npm run build` succeed
   be silently reset.
 
 ### Still required before enabling
-1. **Account entries are not shown in the library.** `src/main.tsx` renders only
-   the local `entries` store, so pulled account rows, conflict copies and server
-   deletions never reach the UI. Download is therefore not yet usable.
-2. **The migration has never been executed.** The redesigned SQL has not been
+1. **The migration has never been executed.** The redesigned SQL has not been
    parsed or run against PostgreSQL; the preflight, the sequence/advisory-lock
-   ordering, the payload hash and the new paging check are unproven.
-3. **The live two-account gate has not passed** against the new RPC contract.
+   ordering, the payload hash and the new paging check are unproven. Safe next
+   step: run the read-only `supabase/migrations/0000_preflight.sql` (it only
+   SELECTs and a `begin read only` block) and read its report.
+2. **The live two-account gate has not passed** against the new RPC contract.
    A missing function returning 404 is not an authorization pass.
-4. `currentUserId` reads the locally stored session rather than server-verifying
+3. `currentUserId` reads the locally stored session rather than server-verifying
    the token on every check; an already-sent request cannot be retracted.
-5. Two-device and real-IndexedDB workflows remain untested.
+4. Two-device and real-IndexedDB workflows remain untested.
+
+### Library view
+`src/library-view.ts` merges the local library with the active account's cached
+entries (tombstones hidden, account record wins on the same id), and
+`subscribeActiveAccount` / `notifyAccountDataChanged` refresh the gallery when the
+account changes or a pull/conflict resolution updates the cache. While
+`SYNC_ENABLED` is false the merge is skipped entirely, so the rendered list is
+identical to the local-only build.
 
 ### Note on the earlier cleanup
 An earlier instruction in this session told the user to drop the `revision` and

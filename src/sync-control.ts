@@ -68,8 +68,28 @@ export const SYNC_ENABLED = false;
 // save/delete handlers can route account-owned edits through the durable outbox
 // without threading session state through the whole App component.
 let activeAccountId: string | null = null;
+type ActiveAccountListener = (accountId: string | null) => void;
+const activeAccountListeners = new Set<ActiveAccountListener>();
+
+/** Notifies `listener` when the signed-in account changes; returns an unsubscribe. */
+export function subscribeActiveAccount(listener: ActiveAccountListener): () => void {
+  activeAccountListeners.add(listener);
+  return () => {
+    activeAccountListeners.delete(listener);
+  };
+}
+
 export function setActiveAccount(accountId: string | null): void {
+  if (accountId === activeAccountId) return;
   activeAccountId = accountId;
+  // Copy before notifying: a listener may unsubscribe while we iterate.
+  for (const listener of Array.from(activeAccountListeners)) {
+    try {
+      listener(accountId);
+    } catch {
+      // A broken listener must not stop the others or the auth flow.
+    }
+  }
 }
 export function getActiveAccount(): string | null {
   return activeAccountId || null;
@@ -118,9 +138,36 @@ function transportOf(client: SupabaseClient): TransportClient {
   };
 }
 
+/**
+ * Tells subscribed views to re-read the account cache. A pull can add, change or
+ * tombstone entries while the app is open, so the gallery must be told to refresh
+ * — otherwise downloaded entries would not appear until the next account change.
+ */
+export function notifyAccountDataChanged(): void {
+  const accountId = activeAccountId;
+  for (const listener of Array.from(activeAccountListeners)) {
+    try {
+      listener(accountId);
+    } catch {
+      // A broken listener must not stop the others.
+    }
+  }
+}
+
 export function runSync(accountId: string): Promise<SyncReport> {
   if (!SYNC_ENABLED) return Promise.resolve({ pushed: 0, pulled: 0, conflictsDetected: 0, waiting: 0, retries: 0, lastError: null, errorKind: null, paused: false });
-  return runSyncPending(transportOf(buildClient()), accountId);
+  return runSyncPending(transportOf(buildClient()), accountId).then(
+    (report) => {
+      // The cache may have gained rows or conflicts; let the view catch up.
+      notifyAccountDataChanged();
+      return report;
+    },
+    (error) => {
+      // Even a partially-completed pass can have cached rows; refresh, then rethrow.
+      notifyAccountDataChanged();
+      throw error;
+    },
+  );
 }
 
 /** Whether a local edit should be routed through the account outbox. */
@@ -214,6 +261,7 @@ export async function resolveConflictKeepMine(accountId: string, conflict: Confl
   const op = toOutbox(pendingForConflict({ local: conflict.local, server: { id: conflict.entryId, revision: conflict.server.revision, entry: conflict.server.entry } }, conflict.local.entry));
   await replaceQueuedChange({ accountId, entryId: conflict.entryId, entry: conflict.local.entry, revision: conflict.server.revision }, op);
   await clearConflict(accountId, conflict.entryId);
+  notifyAccountDataChanged();
 }
 
 /**
@@ -231,6 +279,7 @@ export async function resolveConflictUseTheirs(accountId: string, conflict: Conf
     entry: conflict.server.entry,
     revision: conflict.server.revision,
   });
+  notifyAccountDataChanged();
 }
 
 /**
@@ -255,6 +304,7 @@ export async function resolveConflictKeepBoth(accountId: string, conflict: Confl
     entry: conflict.server.entry,
     revision: conflict.server.revision,
   });
+  notifyAccountDataChanged();
 }
 
 export { markAccountCached, listCachedAccounts, stageLocalImport, revertStagedImport, clearAccountCache, listConflicts, listPending, listAccountEntries, getMeta, putMeta, putBackup, deleteBackup, listBackups, putMutation, deleteMutation, listMutations };

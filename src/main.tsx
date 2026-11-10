@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AccountPanel } from './AccountPanel';
-import { Entry, listEntries, putEntry, deleteEntry, makeBackup, parseBackup, replaceEntries } from './storage';
-import { routeLocalMutation } from './sync-control';
+import { Entry, listEntries, putEntry, deleteEntry, makeBackup, parseBackup, replaceEntries, type AccountRecord } from './storage';
+import { getActiveAccount, listAccountEntries, routeLocalMutation, subscribeActiveAccount, SYNC_ENABLED } from './sync-control';
+import { mergeLibraryEntries } from './library-view';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 
@@ -25,6 +26,8 @@ function App() {
  const [filtersOpen,setFiltersOpen]=useState(false), [addOpen,setAddOpen]=useState(false);
  const [items,setItems]=useState<Entry[]>([]), [loaded,setLoaded]=useState(false), [storageError,setStorageError]=useState(''), [editing,setEditing]=useState<Entry|null>(null), [draft,setDraft]=useState({title:'',type:'Game',status:'Planned',progress:'',notes:''}), [context,setContext]=useState<{id:string;x:number;y:number}|null>(null), [detail,setDetail]=useState<Sample|null>(null), [tagEdit,setTagEdit]=useState<string|null>(null), [newTag,setNewTag]=useState(''), [statusMenu,setStatusMenu]=useState<string|null>(null), [paneDirty,setPaneDirty]=useState(false);
  useEffect(()=>{listEntries().then(entries=>{setItems(entries.sort((a,b)=>b.createdAt.localeCompare(a.createdAt)));setLoaded(true)}).catch(()=>setStorageError('Could not open local storage. Your data has not been changed.'));},[]);
+ const [accountEntries,setAccountEntries]=useState<AccountRecord[]>([]);
+ useEffect(()=>{if(!SYNC_ENABLED)return;const reload=()=>{const account=getActiveAccount();if(!account){setAccountEntries([]);return}listAccountEntries(account).then(setAccountEntries).catch(()=>setAccountEntries([]))};reload();return subscribeActiveAccount(reload)},[]);
  const save=async(entry:Entry)=>{try{await putEntry(entry);setItems(old=>[entry,...old.filter(i=>i.id!==entry.id)]);setStorageError('');void routeLocalMutation(entry.id,'save',entry);return true}catch{setStorageError('Could not save. Check browser storage space or permissions and try again.');return false}};
  const update=(id:string,patch:Partial<Entry>)=>{const item=items.find(i=>i.id===id);if(item)void save({...item,...patch})};
  const exportBackup=()=>{const url=URL.createObjectURL(new Blob([makeBackup(items)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='stillroom-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
@@ -32,7 +35,7 @@ function App() {
  const openPane=(item:Entry|null)=>{if(paneDirty&&!confirm('Discard unsaved changes?'))return;setPaneDirty(false);setDetail(item)};
  const [collapsed,setCollapsed]=useState(false), [menu,setMenu]=useState(false), [page,setPage]=useState<'library'|'profile'|'settings'>('library');
  const [query,setQuery]=useState(''), [type,setType]=useState('All types'), [status,setStatus]=useState('All statuses'), [tag,setTag]=useState('All tags'), [sort,setSort]=useState('Recently added');
- const shown=useMemo(()=>items.filter(x => (x.title+' '+x.tags.join(' ')).toLowerCase().includes(query.toLowerCase()) && (type==='All types'||x.type===type) && (status==='All statuses'||x.status===status) && (tag==='All tags'||x.tags.includes(tag))).sort((a,b)=>sort==='Title A–Z'?a.title.localeCompare(b.title):0),[items,query,type,status,tag,sort]);
+ const shown=useMemo(()=>{const source=SYNC_ENABLED?mergeLibraryEntries(items,accountEntries,getActiveAccount()):items;return source.filter(x => (x.title+' '+x.tags.join(' ')).toLowerCase().includes(query.toLowerCase()) && (type==='All types'||x.type===type) && (status==='All statuses'||x.status===status) && (tag==='All tags'||x.tags.includes(tag))).sort((a,b)=>sort==='Title A–Z'?a.title.localeCompare(b.title):0)},[items,accountEntries,query,type,status,tag,sort]);
  const nav=(icon:React.ReactNode,label:string,active=false,onClick?:()=>void)=><button className={'nav-item '+(active?'active':'')} data-tooltip={collapsed?label:undefined} aria-label={label} onClick={onClick} disabled={!onClick}><span className="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{icon}</svg></span>{!collapsed&&<span>{label}</span>}</button>;
  return <div className={'shell '+(collapsed?'is-collapsed ':'')+(detail?'has-entry-pane':'')}>
   <aside className="sidebar" aria-label="Main navigation"><div className="sidebar-top"><span className="sidebar-symbol" aria-hidden="true">◈</span>{!collapsed&&<span className="nav-heading">stillroom</span>}<button className="sidebar-toggle" onClick={()=>setCollapsed(!collapsed)} aria-label={collapsed?'Expand navigation':'Collapse navigation'} title={collapsed?'Expand navigation':'Collapse navigation'}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9 4.5v15"/><path d={collapsed?"m13 9 2.5 2.5L13 14":"m16 9-2.5 2.5L16 14"}/></svg></button></div>

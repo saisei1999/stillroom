@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { acknowledgeChange, discardChange, closeDatabase, queueAccountChange, listPending, listConflicts, storeConflict, getAccountEntry, type AccountRecord, type OutboxRecord, type Entry } from '../src/storage';
-import { summarizeSync, conflictPreview, routeLocalMutation, setActiveAccount, queueAccountSave, queueAccountDelete, resolveConflictKeepBoth, resolveConflictUseTheirs, isWaiting, runSync, SYNC_ENABLED, type ImportChoice } from '../src/sync-control';
+import { summarizeSync, conflictPreview, routeLocalMutation, setActiveAccount, subscribeActiveAccount, notifyAccountDataChanged, getActiveAccount, queueAccountSave, queueAccountDelete, resolveConflictKeepBoth, resolveConflictUseTheirs, isWaiting, runSync, SYNC_ENABLED, type ImportChoice } from '../src/sync-control';
 import type { SyncReport } from '../src/account-sync';
 
 const entryOf = (id: string, title = id): Entry => ({
@@ -182,6 +182,51 @@ describe('sync control > mutation routing', () => {
     expect(pending[0].expectedRevision).toBe(2);
     // Account cache now reflects the tombstone expectation.
     expect((await getAccountEntry('acct', 'a'))?.entry).toBeNull();
+  });
+});
+
+describe('sync control > account subscription', () => {
+  it('notifies subscribers when the active account changes and unsubscribes cleanly', () => {
+    setActiveAccount(null);
+    const seen: (string | null)[] = [];
+    const unsubscribe = subscribeActiveAccount((id) => seen.push(id));
+    setActiveAccount('acctA');
+    setActiveAccount('acctA'); // unchanged: must not notify twice
+    setActiveAccount(null);
+    unsubscribe();
+    setActiveAccount('acctB');
+    expect(seen).toEqual(['acctA', null]);
+    expect(getActiveAccount()).toBe('acctB');
+    setActiveAccount(null);
+  });
+
+  it('refreshes subscribers even when the account did not change (after a pull)', () => {
+    setActiveAccount('acctA');
+    let calls = 0;
+    const unsubscribe = subscribeActiveAccount(() => {
+      calls += 1;
+    });
+    notifyAccountDataChanged();
+    notifyAccountDataChanged();
+    expect(calls).toBe(2);
+    unsubscribe();
+    setActiveAccount(null);
+  });
+
+  it('does not let a throwing subscriber break the others', () => {
+    setActiveAccount(null);
+    let reached = 0;
+    const unsubscribeBad = subscribeActiveAccount(() => {
+      throw new Error('boom');
+    });
+    const unsubscribeGood = subscribeActiveAccount(() => {
+      reached += 1;
+    });
+    setActiveAccount('acctA');
+    expect(reached).toBe(1);
+    unsubscribeBad();
+    unsubscribeGood();
+    setActiveAccount(null);
   });
 });
 
