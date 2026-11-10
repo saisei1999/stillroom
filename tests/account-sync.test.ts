@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
-import { describe, it, expect } from 'vitest';
+import { IDBFactory } from 'fake-indexeddb';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import {
   closeDatabase,
   queueAccountChange,
@@ -57,10 +58,12 @@ const accountRecord = (accountId: string, entryId: string, over: Partial<Account
   ...over,
 });
 
-function resetStorage(): void {
+beforeEach(() => {
   closeDatabase();
-  (globalThis as unknown as { indexedDB: { reset: () => void } }).indexedDB.reset();
-}
+  globalThis.indexedDB = new IDBFactory();
+});
+
+afterEach(() => closeDatabase());
 
 function row(id: string, revision: number, deleted = false, payload: unknown = entryOf(id)): ServerRow {
   return { id, revision, deleted, payload, updated_at: '2026-01-01T00:00:00.000Z' };
@@ -95,7 +98,6 @@ describe('account sync transport > parsing and payloads', () => {
 
 describe('account sync transport > pull', () => {
   it('pages until a short page and validates every row', async () => {
-    resetStorage();
     let calls = 0;
     const client = fakeClient(async (fn, args) => {
       calls += 1;
@@ -109,7 +111,6 @@ describe('account sync transport > pull', () => {
   });
 
   it('propagates a server error without fabricating a result', async () => {
-    resetStorage();
     const client = fakeClient(async () => ({ data: null, error: { code: 'pgrst301', message: 'jwt expired' } }));
     await expect(pullAccountEntries(client, null)).rejects.toThrow();
   });
@@ -117,12 +118,11 @@ describe('account sync transport > pull', () => {
 
 describe('account sync transport > push', () => {
   it('acknowledges an applied change and adopts the server revision', async () => {
-    resetStorage();
     await queueAccountChange(accountRecord('acct', 'a', { revision: 0 }), change('acct', 'a', { expectedRevision: 0 }));
     const client = fakeClient(async (fn) => {
       if (fn !== 'apply_entry_change') throw new Error('unexpected fn');
       const result: ApplyResult = { outcome: 'applied', revision: 4, payload: entryOf('a', 'applied'), deleted: false, applied_revision: 4 };
-      return { data: result, error: null };
+      return { data: [result], error: null };
     });
     const pending = await listPending('acct');
     expect(await pushChange(client, 'acct', pending[0])).toBe('applied');
@@ -130,12 +130,32 @@ describe('account sync transport > push', () => {
     expect((await getAccountEntry('acct', 'a'))?.revision).toBe(4);
   });
 
+  it.each([
+    ['null', null],
+    ['empty array', []],
+    ['multiple rows', [{ outcome: 'applied' }, { outcome: 'applied' }]],
+    ['object rather than array', { outcome: 'applied', revision: 1, payload: entryOf('a'), deleted: false }],
+    ['null row', [null]],
+    ['array row', [[]]],
+    ['unknown outcome', [{ outcome: 'unexpected', revision: 1, payload: entryOf('a'), deleted: false }]],
+    ['invalid revision', [{ outcome: 'applied', revision: 0, payload: entryOf('a'), deleted: false }]],
+    ['invalid payload', [{ outcome: 'applied', revision: 1, payload: {}, deleted: false }]],
+  ])('rejects %s without acknowledging or changing the cache', async (_label, data) => {
+    await queueAccountChange(accountRecord('acct', 'a'), change('acct', 'a'));
+    const before = await getAccountEntry('acct', 'a');
+    const pending = await listPending('acct');
+    const client = fakeClient(async () => ({ data, error: null }));
+    await expect(pushChange(client, 'acct', pending[0])).rejects.toThrow();
+    expect(await listPending('acct')).toEqual(pending);
+    expect(await getAccountEntry('acct', 'a')).toEqual(before);
+    expect(await listConflicts('acct')).toEqual([]);
+  });
+
   it('records a conflict so the UI can resolve it instead of overwriting', async () => {
-    resetStorage();
     await queueAccountChange(accountRecord('acct', 'a', { revision: 0 }), change('acct', 'a', { expectedRevision: 0 }));
     const client = fakeClient(async (fn) => {
       const result: ApplyResult = { outcome: 'conflict', revision: 9, payload: entryOf('a', 'server v9'), deleted: false, applied_revision: null };
-      return { data: result, error: null };
+      return { data: [result], error: null };
     });
     const pending = await listPending('acct');
     expect(await pushChange(client, 'acct', pending[0])).toBe('conflict');
@@ -144,11 +164,10 @@ describe('account sync transport > push', () => {
   });
 
   it('handles already_applied idempotently (server already owns the operation)', async () => {
-    resetStorage();
     await queueAccountChange(accountRecord('acct', 'a', { revision: 0 }), change('acct', 'a', { expectedRevision: 0 }));
     const client = fakeClient(async (fn) => {
       const result: ApplyResult = { outcome: 'already_applied', revision: 4, payload: entryOf('a', 'applied'), deleted: false, applied_revision: 3 };
-      return { data: result, error: null };
+      return { data: [result], error: null };
     });
     const pending = await listPending('acct');
     expect(await pushChange(client, 'acct', pending[0])).toBe('already_applied');
@@ -158,12 +177,11 @@ describe('account sync transport > push', () => {
 
 describe('account sync transport > full sync pass', () => {
   it('pulls server rows and keeps pending work that conflicts', async () => {
-    resetStorage();
     await queueAccountChange(accountRecord('acct', 'a', { revision: 0 }), change('acct', 'a', { expectedRevision: 0 }));
     // Server already has entry 'a' at revision 5 (remote edit).
     const client = fakeClient(async (fn) => {
       if (fn === 'list_account_entries') return { data: [row('a', 5, false, entryOf('a', 'remote'))], error: null };
-      if (fn === 'apply_entry_change') return { data: { outcome: 'conflict', revision: 5, payload: entryOf('a', 'remote'), deleted: false, applied_revision: null } as ApplyResult, error: null };
+      if (fn === 'apply_entry_change') return { data: [{ outcome: 'conflict', revision: 5, payload: entryOf('a', 'remote'), deleted: false, applied_revision: null } as ApplyResult], error: null };
       throw new Error('unexpected fn');
     });
     const report = await syncPending(client, 'acct');
@@ -173,7 +191,6 @@ describe('account sync transport > full sync pass', () => {
   });
 
   it('reports a retryable failure and keeps the pending change queued', async () => {
-    resetStorage();
     await queueAccountChange(accountRecord('acct', 'a', { revision: 0 }), change('acct', 'a', { expectedRevision: 0 }));
     const client = fakeClient(async (fn) => {
       if (fn === 'list_account_entries') return { data: [], error: null };
@@ -187,7 +204,6 @@ describe('account sync transport > full sync pass', () => {
   });
 
   it('never claims synced when the server did not acknowledge', async () => {
-    resetStorage();
     await queueAccountChange(accountRecord('acct', 'a', { revision: 0 }), change('acct', 'a', { expectedRevision: 0 }));
     const client = fakeClient(async (fn) => {
       if (fn === 'list_account_entries') return { data: [], error: null };
@@ -200,12 +216,11 @@ describe('account sync transport > full sync pass', () => {
   });
 
   it('reconciles and pushes a create when the server has no row for it', async () => {
-    resetStorage();
     await queueAccountChange(accountRecord('acct', 'a', { revision: 0 }), change('acct', 'a', { expectedRevision: 0 }));
     const client = fakeClient(async (fn) => {
       if (fn === 'list_account_entries') return { data: [], error: null };
       const result: ApplyResult = { outcome: 'applied', revision: 1, payload: entryOf('a'), deleted: false, applied_revision: 1 };
-      return { data: result, error: null };
+      return { data: [result], error: null };
     });
     const report = await syncPending(client, 'acct');
     expect(report.pushed).toBe(1);
@@ -215,7 +230,6 @@ describe('account sync transport > full sync pass', () => {
 
 describe('account sync transport > conflict helpers', () => {
   it('builds a pending create for a keep-both conflict copy', () => {
-    resetStorage();
     const base = change('acct', 'a', { expectedRevision: 3 });
     const guard = change('acct', 'a', { expectedRevision: 3 });
     const now = '2026-03-01T00:00:00.000Z';

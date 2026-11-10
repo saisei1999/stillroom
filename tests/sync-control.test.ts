@@ -1,7 +1,8 @@
 import 'fake-indexeddb/auto';
-import { describe, it, expect } from 'vitest';
-import { closeDatabase, queueAccountChange, listPending, getAccountEntry, type AccountRecord, type OutboxRecord, type Entry } from '../src/storage';
-import { summarizeSync, conflictPreview, routeLocalMutation, setActiveAccount, queueAccountDelete, isWaiting, type ImportChoice } from '../src/sync-control';
+import { IDBFactory } from 'fake-indexeddb';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
+import { acknowledgeChange, discardChange, closeDatabase, queueAccountChange, listPending, getAccountEntry, type AccountRecord, type OutboxRecord, type Entry } from '../src/storage';
+import { summarizeSync, conflictPreview, routeLocalMutation, setActiveAccount, queueAccountSave, queueAccountDelete, resolveConflictKeepBoth, isWaiting, type ImportChoice } from '../src/sync-control';
 import type { SyncReport } from '../src/account-sync';
 
 const entryOf = (id: string, title = id): Entry => ({
@@ -37,10 +38,12 @@ const record = (accountId: string, entryId: string, over: Partial<AccountRecord>
   ...over,
 });
 
-function resetStorage(): void {
+beforeEach(() => {
   closeDatabase();
-  (globalThis as unknown as { indexedDB: { reset: () => void } }).indexedDB.reset();
-}
+  globalThis.indexedDB = new IDBFactory();
+});
+
+afterEach(() => closeDatabase());
 
 describe('sync control > summary', () => {
   it('is honest and never over-claims', () => {
@@ -75,7 +78,6 @@ describe('sync control > conflict preview', () => {
 
 describe('sync control > mutation routing', () => {
   it('returns false (local-only) when sync is disabled or no account is active', async () => {
-    resetStorage();
     setActiveAccount(null);
     // SYNC_ENABLED is false in this build, so routing is always the local path.
     expect(await routeLocalMutation('a', 'save', entryOf('a'))).toBe(false);
@@ -84,8 +86,40 @@ describe('sync control > mutation routing', () => {
     setActiveAccount(null);
   });
 
+  it('keeps a newer save when the previous save is acknowledged', async () => {
+    await queueAccountSave('acct', entryOf('a', 'first'), 2);
+    const [first] = await listPending('acct');
+    await queueAccountSave('acct', entryOf('a', 'second'), 2);
+    const [newer] = await listPending('acct');
+    expect(newer.operationId).not.toBe(first.operationId);
+    expect(await acknowledgeChange('acct', 'a', first.operationId, 3)).toBe('superseded');
+    expect(await listPending('acct')).toMatchObject([{ operationId: newer.operationId, expectedRevision: 3, entry: { title: 'second' } }]);
+  });
+
+  it('keeps a newer delete when the previous save is acknowledged or discarded', async () => {
+    await queueAccountSave('acct', entryOf('a'), 2);
+    const [first] = await listPending('acct');
+    await queueAccountDelete('acct', 'a');
+    const [newer] = await listPending('acct');
+    expect(newer.operationId).not.toBe(first.operationId);
+    expect(await discardChange('acct', 'a', first.operationId)).toBe(false);
+    expect(await acknowledgeChange('acct', 'a', first.operationId, 3)).toBe('superseded');
+    expect(await listPending('acct')).toMatchObject([{ operationId: newer.operationId, expectedRevision: 3, entry: null }]);
+  });
+
+  it('gives a rebased keep-both operation a new identity', async () => {
+    const local = change('acct', 'a', { expectedRevision: 2 });
+    const conflict = { accountId: 'acct', entryId: 'a', local, server: record('acct', 'a', { revision: 3 }), detectedAt: '2026-01-01T00:00:00.000Z' };
+    await queueAccountChange(record('acct', 'a', { revision: 2 }), local);
+    await resolveConflictKeepBoth('acct', conflict);
+    const original = (await listPending('acct')).find((op) => op.entryId === 'a');
+    expect(original?.operationId).not.toBe(local.operationId);
+    expect(original?.expectedRevision).toBe(3);
+    expect(await acknowledgeChange('acct', 'a', local.operationId, 3)).toBe('superseded');
+    expect((await listPending('acct')).find((op) => op.entryId === 'a')?.operationId).toBe(original?.operationId);
+  });
+
   it('queues a durable delete tombstone for an account-owned entry', async () => {
-    resetStorage();
     await queueAccountChange(record('acct', 'a', { revision: 2 }), change('acct', 'a', { expectedRevision: 2 }));
     await queueAccountDelete('acct', 'a');
     const pending = await listPending('acct');

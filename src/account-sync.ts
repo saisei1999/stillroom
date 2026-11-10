@@ -143,7 +143,7 @@ async function absorbServerRow(accountId: string, server: ServerEntry): Promise<
 export async function pushChange(client: TransportClient, accountId: string, change: OutboxRecord): Promise<'applied' | 'already_applied' | 'conflict' | 'error'> {
   assertChangeForAccount(change, accountId);
   const { payload, deleted } = changePayload(change);
-  const { data, error } = await client.rpc<ApplyResult>('apply_entry_change', {
+  const { data, error } = await client.rpc<unknown>('apply_entry_change', {
     p_id: change.entryId,
     p_operation_id: change.operationId,
     p_expected_revision: change.expectedRevision,
@@ -151,20 +151,24 @@ export async function pushChange(client: TransportClient, accountId: string, cha
     p_deleted: deleted,
   });
   if (error) throw error;
-  if (!data) throw new Error('The account service returned no result for this change.');
-
-  const outcome = String(data.outcome ?? '');
+  // PostgREST returns SETOF / TABLE results as an array, even for one row.
+  // Reject missing, ambiguous, and malformed results before touching local data.
+  if (!Array.isArray(data) || data.length !== 1 || !data[0] || typeof data[0] !== 'object' || Array.isArray(data[0])) {
+    throw new Error('The account service returned an invalid result for this change.');
+  }
+  const result = data[0] as Record<string, unknown>;
+  const outcome = result.outcome;
   if (outcome === 'applied' || outcome === 'already_applied') {
     // The server owns this operation (applied just now, or applied by an earlier
     // retry). Adopt its current row and clear the outbox entry atomically.
-    const serverRow = parseServerRow({ id: change.entryId, revision: data.revision, payload: data.payload, deleted: data.deleted });
+    const serverRow = parseServerRow({ id: change.entryId, revision: result.revision, payload: result.payload, deleted: result.deleted });
     const server = rowToServerEntry(serverRow);
     await absorbServerRow(accountId, server);
-    await acknowledgeChange(accountId, change.entryId, change.operationId, data.revision);
+    await acknowledgeChange(accountId, change.entryId, change.operationId, serverRow.revision);
     return outcome === 'applied' ? 'applied' : 'already_applied';
   }
   if (outcome === 'conflict') {
-    const serverRow = parseServerRow({ id: change.entryId, revision: data.revision, payload: data.payload, deleted: data.deleted });
+    const serverRow = parseServerRow({ id: change.entryId, revision: result.revision, payload: result.payload, deleted: result.deleted });
     const server = rowToServerEntry(serverRow);
     await storeConflict({
       accountId,

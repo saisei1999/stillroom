@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
-import { describe, it, expect } from 'vitest';
+import { IDBFactory } from 'fake-indexeddb';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import {
   closeDatabase,
   listEntries,
@@ -61,14 +62,15 @@ const accountRecord = (accountId: string, entryId: string, over: Partial<Account
   ...over,
 });
 
-function resetStorage(): void {
+beforeEach(() => {
   closeDatabase();
-  (globalThis as unknown as { indexedDB: { reset: () => void } }).indexedDB.reset();
-}
+  globalThis.indexedDB = new IDBFactory();
+});
+
+afterEach(() => closeDatabase());
 
 describe('account sync storage > two-account isolation', () => {
   it('keeps entries of separate accounts strictly apart', async () => {
-    resetStorage();
     await putEntry(entryOf('local'));
     await stageLocalImport('acctA');
     await putEntry(entryOf('localB'));
@@ -86,7 +88,6 @@ describe('account sync storage > two-account isolation', () => {
   });
 
   it('queues a local change atomically with its cached view', async () => {
-    resetStorage();
     const record = accountRecord('alice', 'e1', { revision: 0 });
     const op = change('alice', 'e1');
     await queueAccountChange(record, op);
@@ -98,7 +99,6 @@ describe('account sync storage > two-account isolation', () => {
   });
 
   it('rejects a change whose account or payload does not match its cached view', async () => {
-    resetStorage();
     expect(() => queueAccountChange(accountRecord('alice', 'e1'), change('bob', 'e1'))).toThrow();
     expect(() => queueAccountChange(accountRecord('alice', 'e1'), change('alice', 'e2'))).toThrow();
     const mismatchedEntry = change('alice', 'e1');
@@ -109,7 +109,6 @@ describe('account sync storage > two-account isolation', () => {
 
 describe('account sync storage > acknowledgement', () => {
   it('marks the change as applied when it is still the head of the outbox', async () => {
-    resetStorage();
     const record = accountRecord('alice', 'e1', { revision: 0 });
     await queueAccountChange(record, change('alice', 'e1', { expectedRevision: 0 }));
     expect(await acknowledgeChange('alice', 'e1', 'op-e1', 7)).toBe('applied');
@@ -120,7 +119,6 @@ describe('account sync storage > acknowledgement', () => {
   });
 
   it('keeps a newer concurrent edit queued and rebases its expectation', async () => {
-    resetStorage();
     await queueAccountChange(accountRecord('alice', 'e1', { revision: 0 }), change('alice', 'e1', { expectedRevision: 0 }));
     // A newer offline edit arrives while the first request is in flight.
     await replaceQueuedChange(accountRecord('alice', 'e1', { revision: 0 }), change('alice', 'e1', { expectedRevision: 7, operationId: 'op-e1-new' }));
@@ -131,12 +129,10 @@ describe('account sync storage > acknowledgement', () => {
   });
 
   it('reports an unknown operation when nothing is queued for that entry', async () => {
-    resetStorage();
     expect(await acknowledgeChange('alice', 'e1', 'op-1', 3)).toBe('unknown-operation');
   });
 
   it('rebases a pending change whose expectation is behind a pulled server row', async () => {
-    resetStorage();
     await queueAccountChange(accountRecord('alice', 'e1'), change('alice', 'e1', { expectedRevision: 0, operationId: 'op-1' }));
     await applyServerRow('alice', accountRecord('alice', 'e1', { entry: entryOf('e1', 'server v1'), revision: 5 }));
     const pending = await getPending('alice', 'e1');
@@ -146,7 +142,6 @@ describe('account sync storage > acknowledgement', () => {
   });
 
   it('re-applies a failure patch only to the owning operation', async () => {
-    resetStorage();
     await queueAccountChange(accountRecord('alice', 'e1'), change('alice', 'e1', { expectedRevision: 0, operationId: 'op-1' }));
     await recordFailure('alice', 'e1', 'op-1', { retryCount: 1, nextAttemptAt: '2026-02-01T00:00:00.000Z', lastError: 'boom' });
     const pending = await getPending('alice', 'e1');
@@ -158,7 +153,6 @@ describe('account sync storage > acknowledgement', () => {
   });
 
   it('only discards a change owned by the given operation id', async () => {
-    resetStorage();
     await queueAccountChange(accountRecord('alice', 'e1'), change('alice', 'e1', { expectedRevision: 0, operationId: 'op-1' }));
     expect(await discardChange('alice', 'e1', 'op-wrong')).toBe(false);
     expect(await getPending('alice', 'e1')).toBeDefined();
@@ -169,7 +163,6 @@ describe('account sync storage > acknowledgement', () => {
 
 describe('account sync storage > conflicts', () => {
   it('stores, lists and clears a conflict scoped to its account', async () => {
-    resetStorage();
     await queueAccountChange(accountRecord('alice', 'e1'), change('alice', 'e1', { expectedRevision: 0, operationId: 'op-1' }));
     await storeConflict({
       accountId: 'alice',
@@ -187,7 +180,6 @@ describe('account sync storage > conflicts', () => {
 
 describe('account sync storage > import', () => {
   it('copies the local library into an account without touching the local store', async () => {
-    resetStorage();
     await putEntry(entryOf('a'));
     await putEntry(entryOf('b'));
     const result = await stageLocalImport('alice');
@@ -200,7 +192,6 @@ describe('account sync storage > import', () => {
   });
 
   it('skips entries the account already knows when staged again', async () => {
-    resetStorage();
     await putEntry(entryOf('a'));
     await stageLocalImport('alice');
     const second = await stageLocalImport('alice');
@@ -209,7 +200,6 @@ describe('account sync storage > import', () => {
   });
 
   it('reverts only staged entries that never reached the server', async () => {
-    resetStorage();
     await putEntry(entryOf('a'));
     await putEntry(entryOf('b'));
     await stageLocalImport('alice');
@@ -225,7 +215,6 @@ describe('account sync storage > import', () => {
 
 describe('account sync storage > cache teardown', () => {
   it('clears one account without touching local or other accounts', async () => {
-    resetStorage();
     await putEntry(entryOf('local1'));
     await putEntry(entryOf('local2'));
     await putEntry(entryOf('local3'));
@@ -240,7 +229,6 @@ describe('account sync storage > cache teardown', () => {
   });
 
   it('records which accounts have caches so work can resume after a reload', async () => {
-    resetStorage();
     await markAccountCached('alice');
     await markAccountCached('bob');
     expect((await listCachedAccounts()).sort()).toEqual(['alice', 'bob']);

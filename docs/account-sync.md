@@ -23,39 +23,29 @@ Use the public project URL and publishable key only, never a secret/service-role
 
 Do not wire the draft schema or display a working sync option until these gates pass. Current app remains local-only.
 
-## Current status
-A complete local-first sync implementation is now built and tested behind a
-runtime flag. Accounts sign in with email/password; `entryPayloadSize` and RLS
-guard payload sizes; the durable outbox, account-partitioned caches, revision
-checks, conflict preservation and explicit conflict resolution are implemented
-and covered by fixture tests. Sync is **not enabled**: `SYNC_ENABLED` in
-`src/sync-control.ts` is `false`, so the shipped app behaves exactly as the
-local-only build does until the live gate below passes.
+## Current status: unsafe draft, do not enable
+Sync remains disabled (`SYNC_ENABLED = false`). The implementation is incomplete
+and has known data-integrity and authorization risks. Do not apply migration
+0001, run its rollback, or follow historical cleanup instructions. An independent
+review identified pagination that can skip rows, unsafe operation-ID reuse,
+existing policies that may undermine isolation, and an RPC response shape mismatch.
+The previous local shim test results do not prove real IndexedDB behavior or
+production readiness; the real test and build commands and live authorization
+and two-device gates remain outstanding.
 
-Live verification still pending: apply `migrations/0001_account_sync.sql`, run
-the `0002` audit, and pass `supabase/verify/authorization.mjs` against two
-confirmed accounts before flipping the flag. Until then the app makes no network
-RPC calls and queues no outbox writes.
+The user was previously advised to drop revision/deletion columns and the operation
+log. Their prior contents and recoverability are unknown. Inventory the affected
+project and its backups before prescribing any database changes.
 
-## How the pieces fit (for reviewers)
-- `src/sync-core.ts` — pure domain decisions (reconcile, retry schedule,
-  validation, conflict classification, import planning, conflict-copy).
-- `src/storage.ts` — IndexedDB v3 with account-partitioned caches and a durable,
-  revision-checked outbox written atomically with local changes.
-- `src/account-sync.ts` — the transport that consumes `apply_entry_change` and
-  `list_account_entries`, validates every server row, and never acknowledges a
-  change until the server does.
-- `src/sync-control.ts` — the tested controller tying UI to storage + transport,
-  behind `SYNC_ENABLED`.
-- `src/AccountPanel.tsx` / `src/main.tsx` — sign-in, import choice, honest sync
-  status, conflict resolution, cache removal, and gated save/delete routing.
-- `supabase/migrations/0001_account_sync.sql` — the reviewed migration (client
-  loses all write grants; writes only via the revision-checked, idempotent,
-  `search_path=''` security-definer RPC; tombstones; cursor pull).
-
-## Server schema (migration written, not yet applied)
-`supabase/migrations/0001_account_sync.sql` supersedes the handoff draft and is the only file to apply; `0002_account_sync_verify.sql` is a read-only audit; `0001_account_sync_rollback.sql` reverses it without deleting user data. Step-by-step instructions and the precondition queries (the existing table's key/columns are still unconfirmed) are in `supabase/README.md`.
-
-Design as written: `account_entries` gains `revision`/`deleted`, named checks and a pull index, and the client loses every write privilege — `authenticated` keeps only owner-scoped `select` of live rows. Writes go through `apply_entry_change(p_id, p_operation_id, p_expected_revision, p_payload, p_deleted)`, which returns `(outcome, revision, payload, deleted, applied_revision)` with outcome `applied`, `already_applied` or `conflict`; tombstones are stored as `{}` and revive as ordinary updates. Pulls use `list_account_entries(p_since, p_limit)`, which returns the caller's rows including tombstones in `(updated_at, id)` order, limit clamped to 1..500. Both are `security definer set search_path = ''`, executable only by `authenticated`.
-
-What is verified today: static migration checks in `tests/rls-fixtures.test.ts` (text analysis only — they cannot prove SQL parses or that RLS denies anything). Still open before sync may ship: applying 0001 in the dashboard, running the 0002 audit, and passing `supabase/verify/authorization.mjs` against two confirmed accounts. The RPC contract is not yet consumed by any client code.
+## Review priorities
+- Replace the timestamp-only pull protocol with a design that cannot miss tied
+  timestamps or transactions committed out of order; test concurrent writes.
+- Preserve each queued operation's identity and payload across retries and edits;
+  prove acknowledgements cannot discard newer work.
+- Fix RPC response parsing against the real Supabase response shape and protect
+  pending local versions during pulls and conflict resolution.
+- Inventory all existing policies and inherited privileges; prove isolation with
+  two real accounts. A missing RPC returning 404 is not an authorization pass.
+- Verify migration, recovery, account switching, backup/restore and two-device
+  workflows with real IndexedDB and PostgreSQL. Run the actual test and build
+  commands and do not enable the flag until all acceptance gates pass.

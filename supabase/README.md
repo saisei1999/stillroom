@@ -1,4 +1,9 @@
-# Supabase account storage — apply, verify, roll back
+# Supabase account storage — historical draft instructions
+
+> **STOP: Do not apply, roll back, or run cleanup SQL from this document.**
+> The migration and client are under review for data-loss, idempotency and
+> authorization issues. The instructions below are historical and unsafe.
+> Inventory the actual database and recoverability before any changes.
 
 Everything in this folder is **applied by hand in the Supabase SQL editor**. No
 step writes `src/`, and nothing here is a service-role operation: the editor runs

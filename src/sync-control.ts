@@ -145,14 +145,15 @@ export async function routeLocalMutation(entryId: string, mode: 'save' | 'delete
  * and the outbox write are separate here; callers already wrote locally. This
  * keeps the account cache and outbox in lock-step with the acknowledged revision.
  */
-export async function queueAccountSave(accountId: string, entry: Entry, expectedRevision: number, opId?: string): Promise<void> {
+export async function queueAccountSave(accountId: string, entry: Entry, expectedRevision: number): Promise<void> {
   const record: AccountRecord = { accountId, entryId: entry.id, entry, revision: expectedRevision };
   const pending = await getPending(accountId, entry.id);
   const createdAt = pending?.createdAt ?? new Date().toISOString();
   const operation: OutboxRecord = {
     accountId,
     entryId: entry.id,
-    operationId: opId ?? (pending?.operationId ?? crypto.randomUUID()),
+    // A replacement can race an in-flight request and needs its own identity.
+    operationId: crypto.randomUUID(),
     expectedRevision,
     entry,
     createdAt,
@@ -172,7 +173,7 @@ export async function queueAccountDelete(accountId: string, entryId: string): Pr
   const op: OutboxRecord = {
     accountId,
     entryId,
-    operationId: pending?.operationId ?? crypto.randomUUID(),
+    operationId: crypto.randomUUID(),
     expectedRevision,
     entry: null,
     createdAt: pending?.createdAt ?? new Date().toISOString(),
@@ -236,12 +237,12 @@ export async function resolveConflictKeepBoth(accountId: string, conflict: Confl
     nextAttemptAt: now,
     lastError: null,
   };
-  await queueAccountSave(accountId, copyOp.entry as Entry, 0, copyOp.operationId);
+  await queueAccountSave(accountId, copyOp.entry as Entry, 0);
   // The original conflict remains for the local side; adopt the server revision
   // as the new expectation so the client's own entry syncs without overwriting.
   await replaceQueuedChange(
     { accountId, entryId: conflict.entryId, entry: conflict.local.entry, revision: conflict.server.revision },
-    { ...conflict.local, expectedRevision: conflict.server.revision, entry: conflict.local.entry },
+    { ...conflict.local, operationId: crypto.randomUUID(), expectedRevision: conflict.server.revision, entry: conflict.local.entry },
   );
   await clearConflict(accountId, conflict.entryId);
 }

@@ -1,3 +1,6 @@
+-- DO NOT APPLY: unsafe draft. Pagination can omit rows, operation idempotency
+-- has races, and existing policy/privilege isolation has not been verified.
+-- Existing installations require a catalog/data inventory before any recovery.
 -- Stillroom account sync — migration 0001.
 --
 -- Supersedes supabase/sync-draft.sql (kept for history only; never apply the draft).
