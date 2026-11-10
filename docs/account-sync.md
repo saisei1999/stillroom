@@ -23,5 +23,90 @@ Use the public project URL and publishable key only, never a secret/service-role
 
 Do not wire the draft schema or display a working sync option until these gates pass. Current app remains local-only.
 
-## Current status
-Account UI and a project-specific publishable client key are prepared. The Supabase project has an account_entries table with RLS and authenticated per-owner policies; a transactional simulated check confirmed cross-account reads and inserts are denied, while anon SELECT privilege was verified absent. Full two-account end-to-end tests, update/delete isolation tests, local-first sync, migration, and password recovery remain unfinished. The UI does not upload entries. The free built-in SMTP only delivers to project team addresses and is rate-limited; configure custom SMTP before general registration.
+## Current status: built, still disabled, not yet safe to enable
+Sync remains disabled (`SYNC_ENABLED = false` in `src/sync-control.ts`), so the
+shipped app is still the local-only build and makes no network RPC calls.
+
+Verified in this repo: `npm test` passes (163 tests) and `npm run build` succeeds.
+The production bundle was inspected and contains **none** of the sync UI strings
+(e.g. "Sync now", "Keep mine"): the bundler constant-folds `SYNC_ENABLED = false`
+and eliminates the whole branch, so the flag-off build provably carries no sync
+code path.
+
+Draft pull request: https://github.com/saisei1999/stillroom/pull/1
+
+### Fixed after review
+- **Pull could skip rows.** The timestamp cursor (`updated_at > p_since`) could
+  permanently drop rows sharing a timestamp. Replaced with a `sync_seq` bigint
+  allocated in commit order under a per-owner advisory lock; the client resumes
+  strictly above it and fails closed if a pulled row has no sequence.
+- **RPC result shape.** `apply_entry_change` returns a table, so PostgREST sends a
+  one-element array; the client treated it as an object and would never have
+  acknowledged a real push. It now validates exactly one row.
+- **Pull overwrote unacknowledged local edits.** `cacheServerRows` now keeps the
+  pending local version and records a conflict instead of clobbering it.
+- **Operation-ID reuse.** Queued saves/deletes and keep-both mint fresh operation
+  ids, and the migration binds an operation id to its request content, so a
+  changed payload can no longer masquerade as an already-applied operation.
+- **Account-identity race.** The transport now verifies the *authenticated*
+  identity before and after every network step, so a session change mid-sync
+  aborts rather than caching or pushing against the wrong account.
+- **Conflict resolution was wrong.** "Use theirs" now adopts the server row
+  (including a server deletion) and clears the conflict; "keep both" preserves the
+  local version as a new entry while the original id keeps the server version.
+- **Migration preflight.** A read-only `0000_preflight.sql` inventories policies,
+  privileges, indexes and constraints and fails closed; it refuses to run if
+  `revision`/`deleted`/`sync_seq` already exist, so prior tombstone state cannot
+  be silently reset.
+- **"Sync now" was disabled by pending work.** The button was disabled whenever
+  changes were queued — exactly when it was needed — so queued work could never
+  be pushed by hand. It is now disabled only while a sync is already running.
+  (Currently dead-code-eliminated while the flag is off; the fix takes effect
+  when sync is enabled.)
+
+### Still required before enabling
+1. **Supabase production is still unverified.** The SQL has now been *executed
+   locally against a real PostgreSQL engine* (PGlite/WASM):
+   `supabase/verify/pg-local-verify.mjs` — 28/28 checks, covering preflight,
+   `0001` applying, the `0002` audit, create/update/conflict/idempotency,
+   tombstones and resurrection, skip-free `sync_seq` paging across tied
+   timestamps, anon denial, cross-account isolation, and the rollback — and
+   `supabase/verify/pg-refusal-verify.mjs` — 7/7 checks proving the migration
+   *fails closed*: it refuses a table that already has `revision`/`deleted`, a
+   table missing `payload`, a partial key with duplicate `(owner_id, id)` rows,
+   an unexplained extra grantee, and a re-apply over an existing install, leaving
+   the schema untouched each time. That is strong evidence about the SQL, but
+   there is still no GoTrue, no PostgREST and no Supabase-managed roles locally,
+   so the hosted project must be exercised once (preflight, then `0001`, then
+   `0002`).
+2. **The live two-account gate has not passed.** Run
+   `supabase/verify/authorization.mjs` against the hosted project after applying
+   the migration. A missing function returning 404 is not an authorization pass.
+3. `currentUserId` reads the locally stored session rather than server-verifying
+   the token on every check; an already-sent request cannot be retracted.
+4. Real-browser IndexedDB and two real browser profiles remain untested; the
+   two-device convergence test (`tests/two-device-sync.test.ts`) covers the
+   logic against a server model, not a real network.
+
+### Fixed while verifying the SQL locally
+`supabase/verify/authorization.mjs` asserted that account B calling
+`apply_entry_change` for account A's entry id with `p_expected_revision = 0`
+must return `conflict`. It does not: ids are unique per **owner**, so B
+legitimately creates its *own* row under that uuid while A's row is untouched.
+The check now proves the real security property — A's row is unchanged.
+
+### Library view
+`src/library-view.ts` merges the local library with the active account's cached
+entries (tombstones hidden, account record wins on the same id), and
+`subscribeActiveAccount` / `notifyAccountDataChanged` refresh the gallery when the
+account changes or a pull/conflict resolution updates the cache. While
+`SYNC_ENABLED` is false the merge is skipped entirely, so the rendered list is
+identical to the local-only build.
+
+### Note on the earlier cleanup
+An earlier instruction in this session told the user to drop the `revision` and
+`deleted` columns and the `sync_operations` table. That advice was wrong and has
+been removed. A read-only check of the live project shows both test accounts have
+zero rows and no successful sync write ever occurred, so nothing was lost — but
+the instruction should never have been given. Do not drop those columns.
+
