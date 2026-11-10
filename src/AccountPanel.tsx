@@ -269,7 +269,11 @@ export function AccountPanel() {
               </div>
             )}
             {importChoice && <p className="account-message">Staged {importChoice.staged} entries.</p>}
-            <button type="button" className="account-secondary" disabled={busy || report.waiting || pendingCount > 0} onClick={syncNow}>
+            {/* Enabled whenever we are not already syncing: the whole point of
+                this button is to push pending work, so disabling it while work
+                is pending (or while a change has paused after its automatic
+                attempts) would make that work impossible to send. */}
+            <button type="button" className="account-secondary" disabled={busy} onClick={syncNow}>
               Sync now
             </button>
             {conflicts.length > 0 && (

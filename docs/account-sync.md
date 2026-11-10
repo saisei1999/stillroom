@@ -27,7 +27,13 @@ Do not wire the draft schema or display a working sync option until these gates 
 Sync remains disabled (`SYNC_ENABLED = false` in `src/sync-control.ts`), so the
 shipped app is still the local-only build and makes no network RPC calls.
 
-Verified in this repo: `npm test` passes (143 tests) and `npm run build` succeeds.
+Verified in this repo: `npm test` passes (163 tests) and `npm run build` succeeds.
+The production bundle was inspected and contains **none** of the sync UI strings
+(e.g. "Sync now", "Keep mine"): the bundler constant-folds `SYNC_ENABLED = false`
+and eliminates the whole branch, so the flag-off build provably carries no sync
+code path.
+
+Draft pull request: https://github.com/saisei1999/stillroom/pull/1
 
 ### Fixed after review
 - **Pull could skip rows.** The timestamp cursor (`updated_at > p_since`) could
@@ -52,6 +58,11 @@ Verified in this repo: `npm test` passes (143 tests) and `npm run build` succeed
   privileges, indexes and constraints and fails closed; it refuses to run if
   `revision`/`deleted`/`sync_seq` already exist, so prior tombstone state cannot
   be silently reset.
+- **"Sync now" was disabled by pending work.** The button was disabled whenever
+  changes were queued — exactly when it was needed — so queued work could never
+  be pushed by hand. It is now disabled only while a sync is already running.
+  (Currently dead-code-eliminated while the flag is off; the fix takes effect
+  when sync is enabled.)
 
 ### Still required before enabling
 1. **Supabase production is still unverified.** The SQL has now been *executed
