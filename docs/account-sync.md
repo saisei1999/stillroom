@@ -54,16 +54,30 @@ Verified in this repo: `npm test` passes (143 tests) and `npm run build` succeed
   be silently reset.
 
 ### Still required before enabling
-1. **The migration has never been executed.** The redesigned SQL has not been
-   parsed or run against PostgreSQL; the preflight, the sequence/advisory-lock
-   ordering, the payload hash and the new paging check are unproven. Safe next
-   step: run the read-only `supabase/migrations/0000_preflight.sql` (it only
-   SELECTs and a `begin read only` block) and read its report.
-2. **The live two-account gate has not passed** against the new RPC contract.
-   A missing function returning 404 is not an authorization pass.
+1. **Supabase production is still unverified.** The SQL has now been *executed
+   locally against a real PostgreSQL engine* (PGlite/WASM) via
+   `supabase/verify/pg-local-verify.mjs` — 28/28 checks, covering preflight,
+   `0001` applying, the `0002` audit, create/update/conflict/idempotency,
+   tombstones and resurrection, skip-free `sync_seq` paging across tied
+   timestamps, anon denial, cross-account isolation, and the rollback. That is
+   strong evidence about the SQL, but there is still no GoTrue, no PostgREST and
+   no Supabase-managed roles locally, so the hosted project must be exercised
+   once (preflight, then `0001`, then `0002`).
+2. **The live two-account gate has not passed.** Run
+   `supabase/verify/authorization.mjs` against the hosted project after applying
+   the migration. A missing function returning 404 is not an authorization pass.
 3. `currentUserId` reads the locally stored session rather than server-verifying
    the token on every check; an already-sent request cannot be retracted.
-4. Two-device and real-IndexedDB workflows remain untested.
+4. Real-browser IndexedDB and two real browser profiles remain untested; the
+   two-device convergence test (`tests/two-device-sync.test.ts`) covers the
+   logic against a server model, not a real network.
+
+### Fixed while verifying the SQL locally
+`supabase/verify/authorization.mjs` asserted that account B calling
+`apply_entry_change` for account A's entry id with `p_expected_revision = 0`
+must return `conflict`. It does not: ids are unique per **owner**, so B
+legitimately creates its *own* row under that uuid while A's row is untouched.
+The check now proves the real security property — A's row is unchanged.
 
 ### Library view
 `src/library-view.ts` merges the local library with the active account's cached

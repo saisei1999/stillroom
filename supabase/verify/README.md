@@ -1,4 +1,17 @@
-# Live authorization proof
+# Verification scripts
+
+Two independent checks live here:
+
+| Script | What it proves | Needs |
+| --- | --- | --- |
+| `pg-local-verify.mjs` | Runs the **real migration SQL** against a real PostgreSQL engine (PGlite/WASM): preflight, `0001` applies, `0002` audit, RPC create/update/conflict/idempotency, tombstones + resurrection, skip-free `sync_seq` paging, anon denial, cross-account isolation, rollback. 28 checks. | `npm install --no-save --ignore-scripts @electric-sql/pglite`, then `node supabase/verify/pg-local-verify.mjs` from the repo root. No network, no real project. |
+| `authorization.mjs` | The live two-account gate against the **hosted project** (browser-facing surface: publishable key + user JWT). | The env vars below, after the migration is applied. |
+
+`pg-local-verify.mjs` is a strong check of the SQL itself but it is **not**
+Supabase production: there is no GoTrue, no PostgREST, and the role/ACL surface
+is emulated by a stub `auth` schema. Passing it does not replace the live gate.
+
+## Live authorization proof
 
 `authorization.mjs` is the two-account gate from `docs/account-sync.md`
 (acceptance gate 1). It runs against the **real project** from a terminal with

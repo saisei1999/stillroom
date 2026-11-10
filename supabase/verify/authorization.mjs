@@ -145,16 +145,24 @@ async function main() {
     record('B: cannot plain-select A row', res.ok && count === 0, `${res.status} rows=${count}`);
   });
 
-  await check('B: guessing A entry id via RPC with expected 0 cannot overwrite', async () => {
+  await check('B: guessing A entry id via RPC cannot change A row', async () => {
+    // Ids are unique per OWNER, not globally, so B asking for A's uuid with
+    // p_expected_revision = 0 legitimately creates B's own row under that same
+    // uuid — it does not touch A's row. The security property to prove is that
+    // A's row is unchanged, not that the call fails.
+    const before = await a.select(TABLES.entries, and(eq('id', entryId), 'select=revision,payload'));
+    const beforeRow = Array.isArray(before.data) ? before.data[0] : undefined;
     const res = await b.rpc(RPCS.apply, {
       p_id: entryId, p_operation_id: newId(), p_expected_revision: 0,
       p_payload: samplePayload('B overwrite attempt'), p_deleted: false,
     });
-    const row = Array.isArray(res.data) ? res.data[0] : undefined;
-    // Must be a conflict or no-op that leaves A's row untouched.
-    const nothingWritten = !res.ok || row?.outcome === 'conflict';
-    record('B: guessing A entry id via RPC with expected 0 cannot overwrite', nothingWritten,
-      `${res.status} outcome=${row?.outcome ?? describe(res)}`);
+    const after = await a.select(TABLES.entries, and(eq('id', entryId), 'select=revision,payload'));
+    const afterRow = Array.isArray(after.data) ? after.data[0] : undefined;
+    const aUnchanged = !!beforeRow && !!afterRow
+      && beforeRow.revision === afterRow.revision
+      && afterRow.payload?.notes === payload1.notes;
+    record('B: guessing A entry id via RPC cannot change A row', aUnchanged,
+      `${res.status} A.revision=${afterRow?.revision} A.notes=${String(afterRow?.payload?.notes).slice(0, 30)}`);
   });
 
   await check('A row unchanged after B guess', async () => {
