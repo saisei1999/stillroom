@@ -25,6 +25,7 @@ import {
   discardChange,
   storeConflict,
   clearConflict,
+  acceptServerRow,
   stageLocalImport,
   revertStagedImport,
   clearAccountCache,
@@ -110,6 +111,10 @@ function transportOf(client: SupabaseClient): TransportClient {
   return {
     rpc: (fn, args) =>
       client.rpc(fn, args).then((result) => ({ data: (result as { data: unknown }).data ?? null, error: (result as { error: unknown }).error ?? null })) as Promise<{ data: null; error: unknown }>,
+    // Read the live session, never the caller-supplied accountId: sync verifies
+    // this still matches before every pull/push and after each await.
+    currentUserId: () =>
+      client.auth.getSession().then(({ data }) => data.session?.user?.id ?? null),
   };
 }
 
@@ -211,40 +216,45 @@ export async function resolveConflictKeepMine(accountId: string, conflict: Confl
   await clearConflict(accountId, conflict.entryId);
 }
 
-/** Resolves a conflict by taking the server's version (an accept). */
+/**
+ * Resolves a conflict by taking the server's version for the original entry.
+ * Drops the local queued change and adopts the server row (including a server
+ * deletion, which is stored as a tombstone) in one atomic step, then clears the
+ * conflict marker. The previous version discarded the local change and then
+ * called `acknowledgeChange`, which found no pending operation and therefore
+ * never adopted the server row and never cleared the conflict.
+ */
 export async function resolveConflictUseTheirs(accountId: string, conflict: ConflictRecord): Promise<void> {
-  if (conflict.local) await discardChange(accountId, conflict.entryId, conflict.local.operationId);
-  if (conflict.server.entry) {
-    await acknowledgeChange(accountId, conflict.entryId, conflict.local?.operationId ?? '', conflict.server.revision);
-  } else {
-    await clearConflict(accountId, conflict.entryId);
-  }
+  await acceptServerRow(accountId, {
+    accountId,
+    entryId: conflict.entryId,
+    entry: conflict.server.entry,
+    revision: conflict.server.revision,
+  });
 }
 
-/** Resolves a diverged conflict by duplicating the local side as a new entry. */
+/**
+ * Resolves a diverged conflict by keeping BOTH sides:
+ * - the local version is preserved as a NEW entry (fresh id) and queued as a create, and
+ * - the ORIGINAL id keeps the server's version.
+ *
+ * The previous version instead re-queued the local content against the original id
+ * at the server revision, so the next push overwrote the server copy — not "both".
+ */
 export async function resolveConflictKeepBoth(accountId: string, conflict: ConflictRecord): Promise<void> {
   if (!conflict.local || !conflict.local.entry) return;
   const now = new Date().toISOString();
   const copy = conflictCopyChange(conflict.local, now);
-  const copyOp: OutboxRecord = {
+  // 1. Preserve the local edit as a brand-new entry (its own create operation).
+  await queueAccountSave(accountId, copy.entry as Entry, 0);
+  // 2. The original entry keeps the server's version; the local edit no longer
+  //    targets it, so it can never be pushed over the server copy.
+  await acceptServerRow(accountId, {
     accountId,
-    entryId: copy.entryId,
-    operationId: copy.operationId,
-    expectedRevision: 0,
-    entry: copy.entry,
-    createdAt: now,
-    retryCount: 0,
-    nextAttemptAt: now,
-    lastError: null,
-  };
-  await queueAccountSave(accountId, copyOp.entry as Entry, 0);
-  // The original conflict remains for the local side; adopt the server revision
-  // as the new expectation so the client's own entry syncs without overwriting.
-  await replaceQueuedChange(
-    { accountId, entryId: conflict.entryId, entry: conflict.local.entry, revision: conflict.server.revision },
-    { ...conflict.local, operationId: crypto.randomUUID(), expectedRevision: conflict.server.revision, entry: conflict.local.entry },
-  );
-  await clearConflict(accountId, conflict.entryId);
+    entryId: conflict.entryId,
+    entry: conflict.server.entry,
+    revision: conflict.server.revision,
+  });
 }
 
 export { markAccountCached, listCachedAccounts, stageLocalImport, revertStagedImport, clearAccountCache, listConflicts, listPending, listAccountEntries, getMeta, putMeta, putBackup, deleteBackup, listBackups, putMutation, deleteMutation, listMutations };

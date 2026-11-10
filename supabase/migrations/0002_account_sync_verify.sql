@@ -1,11 +1,13 @@
 -- Stillroom account sync — migration 0002: POST-APPLY VERIFICATION (read-only).
 --
--- Apply 0001_account_sync.sql first, then paste this whole file into the same
--- Supabase SQL editor. It changes nothing: every statement is a SELECT.
+-- Run 0000_preflight.sql, then apply 0001_account_sync.sql, then paste this whole
+-- file into the same Supabase SQL editor. It changes nothing: every statement is
+-- a SELECT or a `set local role` probe.
 --
 -- Read the output table by table. Every row must say "EXPECTED"; a row that says
 -- "UNEXPECTED ..." lists the invariants that failed, and you should roll back
--- 0001 with the statement in supabase/README.md §6 before writing any data.
+-- 0001 with supabase/migrations/0001_account_sync_rollback.sql before writing any
+-- data.
 --
 -- This file is intentionally repeated from 0001's comments: it is the audit a
 -- human runs, not a claim that the migration is correct.
@@ -13,7 +15,7 @@
 begin read only;
 
 -- ---------------------------------------------------------------------------
--- A. Tables: existence, RLS, constraints, columns.
+-- A. Tables: existence, RLS, columns.
 -- Expect: exactly two rows, both rls = true, both EXPECTED.
 -- ---------------------------------------------------------------------------
 with expected_columns(relname, column_name) as (
@@ -23,10 +25,14 @@ with expected_columns(relname, column_name) as (
          ('account_entries', 'updated_at'),
          ('account_entries', 'revision'),
          ('account_entries', 'deleted'),
+         ('account_entries', 'sync_seq'),
          ('sync_operations', 'owner_id'),
          ('sync_operations', 'operation_id'),
          ('sync_operations', 'entry_id'),
-         ('sync_operations', 'revision'),
+         ('sync_operations', 'expected_revision'),
+         ('sync_operations', 'payload_hash'),
+         ('sync_operations', 'deleted'),
+         ('sync_operations', 'produced_revision'),
          ('sync_operations', 'created_at')
 ),
 missing as (
@@ -48,6 +54,7 @@ table_state as (
             from (values ('account_entries_payload_object_check'),
                          ('account_entries_payload_size_check'),
                          ('account_entries_revision_check'),
+                         ('account_entries_sync_seq_check'),
                          ('account_entries_tombstone_payload_check')) as x(n)
             left join information_schema.table_constraints k
                    on k.table_schema = 'public' and k.table_name = c.relname
@@ -71,39 +78,63 @@ select 'A. tables' as check_group,
   from table_state
  order by relname;
 
--- A2. Ownership key (owner_id, id) must be a primary key or unique constraint.
+-- A2. Ownership key (owner_id, id) must be a VALID, NON-PARTIAL primary key or
+--     unique index; a partial/invalid one would break `on conflict (owner_id, id)`.
 select 'A2. ownership key' as check_group,
        'account_entries (owner_id, id)' as object,
        case when exists (
               select 1
-                from pg_catalog.pg_constraint c
-               where c.conrelid = 'public.account_entries'::regclass
-                 and c.contype in ('p', 'u')
+                from pg_catalog.pg_index i
+               where i.indrelid = 'public.account_entries'::regclass
+                 and i.indisunique
+                 and i.indisvalid
+                 and i.indpred is null
                  and (
                        select array_agg(a.attname::text order by a.attname::text)
                          from pg_catalog.pg_attribute a
-                        where a.attrelid = c.conrelid
-                          and a.attnum = any (c.conkey)
+                        where a.attrelid = i.indrelid
+                          and a.attnum = any (i.indkey::smallint[])
                      ) = array['id', 'owner_id']::text[]
             )
-            then 'EXPECTED' else 'UNEXPECTED: no unique/primary key on (owner_id, id)' end
+            then 'EXPECTED' else 'UNEXPECTED: no valid non-partial unique key on (owner_id, id)' end
        as verdict;
 
 -- A3. Rows added by 0001 must be safe for existing data (no tombstones with
---     content, no oversized payloads, no revision below 1).
+--     content, no oversized payloads, no revision or cursor below 1).
 select 'A3. data fits constraints' as check_group,
        'account_entries' as object,
        case when count(*) = 0 then 'EXPECTED' else 'UNEXPECTED: ' || count(*) || ' row(s) violate' end as verdict
   from public.account_entries
  where revision < 1
+    or sync_seq < 1
     or jsonb_typeof(payload) <> 'object'
     or pg_column_size(payload) > 262144
     or (deleted and payload <> '{}'::jsonb);
 
+-- A4. The pull cursor must be unique per owner: a duplicate sync_seq would let
+--     `sync_seq > cursor` return two rows under one cursor value.
+select 'A4. cursor unique per owner' as check_group,
+       'account_entries (owner_id, sync_seq)' as object,
+       case when count(*) = 0 then 'EXPECTED'
+            else 'UNEXPECTED: ' || count(*) || ' duplicate cursor value group(s)' end as verdict
+  from (
+    select owner_id, sync_seq
+      from public.account_entries
+     group by owner_id, sync_seq
+    having count(*) > 1
+  ) d;
+
+-- A5. The writer allocates from this sequence; without it every apply fails.
+select 'A5. cursor sequence' as check_group,
+       'public.account_entries_sync_seq' as object,
+       case when to_regclass('public.account_entries_sync_seq') is not null
+            then 'EXPECTED' else 'UNEXPECTED: sequence is missing' end as verdict;
+
 -- ---------------------------------------------------------------------------
 -- B. Client privileges. authenticated may only SELECT account_entries;
 --    nothing on sync_operations is reachable by any client role.
--- Expect: 4 rows, all EXPECTED.
+--    PUBLIC must have nothing on either table.
+-- Expect: 14 rows, all EXPECTED; B2 adds 2 more.
 -- ---------------------------------------------------------------------------
 with privileges(relname, role_name, priv, wanted) as (
   values ('account_entries', 'anon', 'SELECT', false),
@@ -132,31 +163,49 @@ select 'B. client privileges' as check_group,
   from privileges p
  order by p.relname, p.role_name, p.priv;
 
+-- B2. PUBLIC must hold nothing. `has_table_privilege` cannot name PUBLIC as a
+--     role, so this reads the grants view instead.
+select 'B2. PUBLIC grants' as check_group,
+       t.relname as object,
+       case when exists (
+              select 1 from information_schema.role_table_grants g
+               where g.table_schema = 'public'
+                 and g.table_name = t.relname
+                 and g.grantee = 'PUBLIC'
+            ) then 'UNEXPECTED: PUBLIC holds a grant' else 'EXPECTED' end as verdict
+  from (values ('account_entries'), ('sync_operations')) as t(relname)
+ order by t.relname;
+
 -- ---------------------------------------------------------------------------
--- C. Policies. account_entries: exactly one SELECT policy for authenticated,
---    no INSERT/UPDATE/DELETE policy. sync_operations: none at all.
+-- C. Policies. account_entries: EXACTLY ONE policy in total, a SELECT policy
+--    for authenticated scoped to the owner and hiding tombstones. Any extra
+--    policy (for example a permissive SELECT that survived) is OR-combined and
+--    could widen reads. sync_operations: none at all.
 -- Expect: 2 rows, both EXPECTED.
 -- ---------------------------------------------------------------------------
+with policy_state as (
+  select count(*) as total_policies,
+         count(*) filter (
+           where cmd = 'SELECT'
+             and roles = array['authenticated']::name[]
+             and permissive = 'PERMISSIVE'
+             and qual like '%owner_id%'
+             and qual like '%auth.uid()%'
+             and qual like '%not deleted%'
+         ) as owner_live_selects
+    from pg_policies
+   where schemaname = 'public' and tablename = 'account_entries'
+)
 select 'C. policies' as check_group,
        'account_entries' as object,
        case
-         when exists (select 1 from pg_policies
-                       where schemaname = 'public' and tablename = 'account_entries'
-                         and cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL'))
-           then 'UNEXPECTED: a write policy still exists'
-         when (select count(*) from pg_policies
-                where schemaname = 'public' and tablename = 'account_entries'
-                  and cmd = 'SELECT'
-                  and roles = array['authenticated']::name[]) <> 1
-           then 'UNEXPECTED: expected exactly one authenticated SELECT policy'
-         when not exists (select 1 from pg_policies
-                           where schemaname = 'public' and tablename = 'account_entries'
-                             and cmd = 'SELECT'
-                             and qual like '%auth.uid()%'
-                             and qual like '%owner_id%')
-           then 'UNEXPECTED: SELECT policy does not scope by auth.uid() = owner_id'
+         when total_policies <> 1
+           then 'UNEXPECTED: expected exactly 1 policy, found ' || total_policies
+         when owner_live_selects <> 1
+           then 'UNEXPECTED: the single policy is not the owner-scoped live SELECT'
          else 'EXPECTED'
        end as verdict
+  from policy_state
 union all
 select 'C. policies',
        'sync_operations',
@@ -167,13 +216,14 @@ select 'C. policies',
 
 -- ---------------------------------------------------------------------------
 -- D. Functions. security definer, empty search_path, no PUBLIC/anon execute,
---    authenticated execute present, own-body not executable by clients.
+--    authenticated execute present. 0001's list RPC takes (bigint, integer):
+--    a timestamp cursor is the defect this revision removed.
 -- Expect: 2 rows, all EXPECTED.
 -- ---------------------------------------------------------------------------
 with funcs(sig, name, argc, authenticated_exec) as (
   values ('public.apply_entry_change(uuid,uuid,bigint,jsonb,boolean)',
           'apply_entry_change', 5, true),
-         ('public.list_account_entries(timestamp with time zone,integer)',
+         ('public.list_account_entries(bigint,integer)',
           'list_account_entries', 2, true)
 )
 select 'D. functions' as check_group,
@@ -197,7 +247,8 @@ select 'D. functions' as check_group,
          on p.oid = to_regprocedure(f.sig)
  order by f.sig;
 
--- D2. Client-facing signatures (what supabase.rpc() can address).
+-- D2. Client-facing signatures (what supabase.rpc() can address). A leftover
+--     timestamp-cursor overload must not exist.
 select 'D2. rpc signatures' as check_group,
        p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as object,
        case when p.prosecdef and coalesce(p.proconfig, array[]::text[]) = array['search_path=""']::text[]
@@ -211,11 +262,11 @@ select 'D2. rpc signatures' as check_group,
 
 -- ---------------------------------------------------------------------------
 -- E. Anonymous access probe. `set local role` is only valid as a top-level
---    statement, so this is not inside a DO block or function. If the next two
---    statements return "permission denied for table account_entries", the anon
---    role has no read path — that error IS the expected result. If they return
---    "EXPECTED: anon was denied", the editor session simply could not switch
---    role; re-run as the postgres role to get the error form.
+--    statement, so this is not inside a DO block or function. If the next
+--    statement returns "permission denied for table account_entries", the anon
+--    role has no read path — that error IS the expected result. If it returns
+--    "UNEXPECTED: anon was NOT denied a read", the editor session simply could
+--    not switch role; re-run as the postgres role to get the error form.
 -- ---------------------------------------------------------------------------
 set local role anon;
 select 'E. anon probe' as check_group,

@@ -23,29 +23,53 @@ Use the public project URL and publishable key only, never a secret/service-role
 
 Do not wire the draft schema or display a working sync option until these gates pass. Current app remains local-only.
 
-## Current status: unsafe draft, do not enable
-Sync remains disabled (`SYNC_ENABLED = false`). The implementation is incomplete
-and has known data-integrity and authorization risks. Do not apply migration
-0001, run its rollback, or follow historical cleanup instructions. An independent
-review identified pagination that can skip rows, unsafe operation-ID reuse,
-existing policies that may undermine isolation, and an RPC response shape mismatch.
-The previous local shim test results do not prove real IndexedDB behavior or
-production readiness; the real test and build commands and live authorization
-and two-device gates remain outstanding.
+## Current status: built, still disabled, not yet safe to enable
+Sync remains disabled (`SYNC_ENABLED = false` in `src/sync-control.ts`), so the
+shipped app is still the local-only build and makes no network RPC calls.
 
-The user was previously advised to drop revision/deletion columns and the operation
-log. Their prior contents and recoverability are unknown. Inventory the affected
-project and its backups before prescribing any database changes.
+Verified in this repo: `npm test` passes (143 tests) and `npm run build` succeeds.
 
-## Review priorities
-- Replace the timestamp-only pull protocol with a design that cannot miss tied
-  timestamps or transactions committed out of order; test concurrent writes.
-- Preserve each queued operation's identity and payload across retries and edits;
-  prove acknowledgements cannot discard newer work.
-- Fix RPC response parsing against the real Supabase response shape and protect
-  pending local versions during pulls and conflict resolution.
-- Inventory all existing policies and inherited privileges; prove isolation with
-  two real accounts. A missing RPC returning 404 is not an authorization pass.
-- Verify migration, recovery, account switching, backup/restore and two-device
-  workflows with real IndexedDB and PostgreSQL. Run the actual test and build
-  commands and do not enable the flag until all acceptance gates pass.
+### Fixed after review
+- **Pull could skip rows.** The timestamp cursor (`updated_at > p_since`) could
+  permanently drop rows sharing a timestamp. Replaced with a `sync_seq` bigint
+  allocated in commit order under a per-owner advisory lock; the client resumes
+  strictly above it and fails closed if a pulled row has no sequence.
+- **RPC result shape.** `apply_entry_change` returns a table, so PostgREST sends a
+  one-element array; the client treated it as an object and would never have
+  acknowledged a real push. It now validates exactly one row.
+- **Pull overwrote unacknowledged local edits.** `cacheServerRows` now keeps the
+  pending local version and records a conflict instead of clobbering it.
+- **Operation-ID reuse.** Queued saves/deletes and keep-both mint fresh operation
+  ids, and the migration binds an operation id to its request content, so a
+  changed payload can no longer masquerade as an already-applied operation.
+- **Account-identity race.** The transport now verifies the *authenticated*
+  identity before and after every network step, so a session change mid-sync
+  aborts rather than caching or pushing against the wrong account.
+- **Conflict resolution was wrong.** "Use theirs" now adopts the server row
+  (including a server deletion) and clears the conflict; "keep both" preserves the
+  local version as a new entry while the original id keeps the server version.
+- **Migration preflight.** A read-only `0000_preflight.sql` inventories policies,
+  privileges, indexes and constraints and fails closed; it refuses to run if
+  `revision`/`deleted`/`sync_seq` already exist, so prior tombstone state cannot
+  be silently reset.
+
+### Still required before enabling
+1. **Account entries are not shown in the library.** `src/main.tsx` renders only
+   the local `entries` store, so pulled account rows, conflict copies and server
+   deletions never reach the UI. Download is therefore not yet usable.
+2. **The migration has never been executed.** The redesigned SQL has not been
+   parsed or run against PostgreSQL; the preflight, the sequence/advisory-lock
+   ordering, the payload hash and the new paging check are unproven.
+3. **The live two-account gate has not passed** against the new RPC contract.
+   A missing function returning 404 is not an authorization pass.
+4. `currentUserId` reads the locally stored session rather than server-verifying
+   the token on every check; an already-sent request cannot be retracted.
+5. Two-device and real-IndexedDB workflows remain untested.
+
+### Note on the earlier cleanup
+An earlier instruction in this session told the user to drop the `revision` and
+`deleted` columns and the `sync_operations` table. That advice was wrong and has
+been removed. A read-only check of the live project shows both test accounts have
+zero rows and no successful sync write ever occurred, so nothing was lost — but
+the instruction should never have been given. Do not drop those columns.
+

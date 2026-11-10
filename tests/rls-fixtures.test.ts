@@ -29,6 +29,7 @@ const root = dir(here);
 const read = (relative: string) => readFileSync(join(root, relative), 'utf8');
 
 const MIGRATION = 'supabase/migrations/0001_account_sync.sql';
+const PREFLIGHT = 'supabase/migrations/0000_preflight.sql';
 const VERIFY = 'supabase/migrations/0002_account_sync_verify.sql';
 const ROLLBACK = 'supabase/migrations/0001_account_sync_rollback.sql';
 const README = 'supabase/README.md';
@@ -65,7 +66,7 @@ const body = (sql: string, tag: string): string => {
 
 describe('static migration checks', () => {
   it('ships the migration, audit and rollback files', () => {
-    for (const file of [MIGRATION, VERIFY, ROLLBACK, README, VERIFY_LIB, VERIFY_AUTH]) {
+    for (const file of [MIGRATION, PREFLIGHT, VERIFY, ROLLBACK, README, VERIFY_LIB, VERIFY_AUTH]) {
       expect(existsSync(join(root, file)), `${file} is missing`).toBe(true);
     }
   });
@@ -111,10 +112,23 @@ describe('static migration checks', () => {
     expect(sql).not.toMatch(/create\s+table\s+(if\s+not\s+exists\s+)?public\.account_entries/);
     expect(sql).toMatch(/alter\s+table\s+public\.account_entries\s+add\s+column\s+revision\s+bigint\s+not\s+null\s+default\s+1/);
     expect(sql).toMatch(/alter\s+table\s+public\.account_entries\s+add\s+column\s+deleted\s+boolean\s+not\s+null\s+default\s+false/);
+    expect(sql).toMatch(/alter\s+table\s+public\.account_entries\s+add\s+column\s+sync_seq\s+bigint/);
+    // No `if not exists` may hide an existing column of the wrong shape.
+    expect(sql).not.toMatch(/add\s+column\s+if\s+not\s+exists/);
     // sync_operations is owned by this migration and must be created explicitly;
     // a stale conflicting table has to fail, so no "if not exists" wrapper.
     expect(sql).toMatch(/create\s+table\s+public\.sync_operations/);
     expect(sql).not.toMatch(/create\s+table\s+if\s+not\s+exists/);
+  });
+
+  it('refuses to reset pre-existing sync columns instead of dropping them', () => {
+    // A previous attempt may have left revision/deleted/sync_seq behind. The
+    // migration must fail closed rather than re-add defaults (which would reset
+    // tombstones) or drop the columns (which would erase them).
+    const sql = flat(read(MIGRATION));
+    expect(sql).toMatch(/account sync columns already present on public\.account_entries/);
+    expect(sql).toMatch(/a\.attname in \('revision', 'deleted', 'sync_seq'\)/);
+    expect(code(read(MIGRATION))).not.toMatch(/drop\s+column/);
   });
 
   // --- RLS ----------------------------------------------------------------
@@ -131,14 +145,13 @@ describe('static migration checks', () => {
 
   it('leaves no client write path to account_entries', () => {
     const sql = code(read(MIGRATION));
-    expect(sql).toMatch(/revoke\s+insert\s*,\s*update\s*,\s*delete\s+on\s+public\.account_entries\s+from\s+authenticated\s*,\s*anon\s*,\s*public/);
+    expect(sql).toMatch(/revoke\s+all\s+on\s+public\.account_entries\s+from\s+authenticated\s*,\s*anon\s*,\s*public/);
     // No INSERT/UPDATE/DELETE policy may be created on the entries table.
     expect(sql).not.toMatch(/create\s+policy[^;]*on\s+public\.account_entries\s+for\s+(insert|update|delete|all)/);
-    // The known draft policy names must be retired explicitly.
-    for (const name of ['account_insert_own', 'account_update_own', 'account_delete_own']) {
-      expect(sql).toMatch(new RegExp(`drop\\s+policy\\s+if\\s+exists\\s+"${name}"`));
-    }
     expect(sql).toMatch(/grant\s+select\s+on\s+public\.account_entries\s+to\s+authenticated/);
+    // Every pre-existing policy is dropped by name, not just the known drafts:
+    // a surviving permissive SELECT would be OR-combined with the new policy.
+    expect(read(MIGRATION)).toMatch(/drop policy %I on public\.account_entries/);
   });
 
   it('scopes the select policy to the owner and hides tombstones', () => {
@@ -186,7 +199,7 @@ describe('static migration checks', () => {
 
   // --- secrets -------------------------------------------------------------
   it('contains no secret key material in the SQL, scripts or workflow', () => {
-    for (const file of [MIGRATION, VERIFY, ROLLBACK, VERIFY_LIB, VERIFY_AUTH, WORKFLOW]) {
+    for (const file of [MIGRATION, PREFLIGHT, VERIFY, ROLLBACK, VERIFY_LIB, VERIFY_AUTH, WORKFLOW]) {
       const text = read(file);
       expect(text.toLowerCase(), `${file} mentions a secret role`).not.toMatch(/\bservice[_-]?role\b/);
       expect(text, `${file} mentions a secret key`).not.toMatch(/sb_secret_/);
@@ -237,6 +250,10 @@ describe('static migration checks', () => {
     expect(listBody).toContain('owner_id = auth.uid()');
     expect(listBody).toContain('deleted');
     expect(listBody).not.toContain('not deleted');
+    // The cursor is the monotonic sync_seq, never a timestamp.
+    expect(listBody).toContain('ae.sync_seq > p_after_seq');
+    expect(listBody).toContain('order by ae.sync_seq');
+    expect(listBody).not.toContain('updated_at >');
   });
 
   it('schema-qualifies every relation reference inside the definer bodies', () => {
@@ -245,7 +262,12 @@ describe('static migration checks', () => {
     // relation ("... from also", "update set ...").
     const stop = new Set(['set', 'values', 'select', 'where', 'conflict', 'also', 'v_row', 'v_applied']);
     for (const [tag, fn] of [['apply', 'apply_entry_change'], ['list', 'list_account_entries']]) {
-      const text = body(sql, tag).toLowerCase();
+      // Strip comments and literals: only real statements should be scanned, so a
+      // comment such as "FOR UPDATE is kept ..." cannot look like a relation.
+      const text = body(sql, tag)
+        .replace(/--[^\n]*/g, ' ')
+        .replace(/'(?:[^']|'')*'/g, "''")
+        .toLowerCase();
       const targets = [
         ...new Set(
           [...text.matchAll(/\b(?:from|into|update|insert into)\s+([a-z_][a-z0-9_.]*)/g)]
@@ -316,11 +338,48 @@ describe('static migration checks', () => {
     const conflict = text.indexOf("'conflict'");
     expect(idempotency).toBeGreaterThan(-1);
     expect(conflict).toBeGreaterThan(idempotency);
-    // The existing-row branch consults the operation log before comparing revisions.
-    const existingBranch = text.slice(text.indexOf('if found then'));
-    expect(existingBranch.indexOf('sync_operations')).toBeLessThan(existingBranch.indexOf('v_row.revision <> p_expected_revision'));
+    // The operation log is consulted before the entry row is locked or compared,
+    // so a replay cannot be mistaken for a lost revision race.
+    const logRead = text.indexOf('from public.sync_operations');
+    expect(logRead).toBeGreaterThan(-1);
+    expect(logRead).toBeLessThan(text.indexOf('for update'));
+    expect(logRead).toBeLessThan(text.indexOf('v_row.revision <> p_expected_revision'));
     // already_applied returns the row's current state, not the stored op payload.
     expect(text).toMatch(/return query select 'already_applied'[^;]*v_row\.payload/);
+  });
+
+  it('binds an operation_id to the full request and rejects reuse with different content', () => {
+    const text = body(read(MIGRATION), 'apply').toLowerCase();
+    // Reuse with different content is a controlled 22023 error, never a raw
+    // unique violation from the sync_operations insert.
+    expect(text).toMatch(/operation id was already used for different content/);
+    expect(text).toMatch(/errcode = '22023'/);
+    for (const field of ['entry_id', 'expected_revision', 'payload_hash', 'deleted']) {
+      expect(text, `binding does not compare ${field}`).toContain(`v_applied.${field}`);
+    }
+    // The hash is sha256 over canonical jsonb text.
+    expect(text).toMatch(/pg_catalog\.sha256\(pg_catalog\.convert_to\(p_payload::text, 'utf8'\)\)/);
+    // The log row is inserted only after the change is decided, so a conflict
+    // never records an operation that would fake an already_applied retry.
+    expect(text.lastIndexOf('insert into public.sync_operations'))
+      .toBeGreaterThan(text.indexOf("v_revision := v_row.revision + 1"));
+  });
+
+  it('serialises writes with a per-owner advisory lock', () => {
+    const text = body(read(MIGRATION), 'apply').toLowerCase();
+    const advisory = text.indexOf('pg_advisory_xact_lock');
+    expect(advisory).toBeGreaterThan(-1);
+    // Concurrent first-creates with one operation_id serialise here, so the
+    // loser finds the committed log row and returns already_applied.
+    expect(text.indexOf('already_applied')).toBeGreaterThan(advisory);
+    // Nothing may write before the lock is taken.
+    for (const write of ['insert into public.', 'update public.']) {
+      const i = text.indexOf(write);
+      if (i !== -1) expect(i).toBeGreaterThan(advisory);
+    }
+    // sync_seq is allocated in the same locked section, which is what makes the
+    // allocation order equal the commit order for one owner.
+    expect(text.indexOf('pg_catalog.nextval')).toBeGreaterThan(advisory);
   });
 
   it('creates rows at revision 1 and requires expected revision 0 for a create', () => {
@@ -338,14 +397,6 @@ describe('static migration checks', () => {
     expect(text.toLowerCase()).not.toMatch(/if v_row\.deleted then\s+.*insert/);
   });
 
-  it('locks the entry before the operation log on every path', () => {
-    const text = body(read(MIGRATION), 'apply').toLowerCase();
-    const lock = text.indexOf('for update');
-    expect(lock).toBeGreaterThan(-1);
-    // The first operation-log read happens after the entry lock.
-    expect(text.indexOf('from public.sync_operations')).toBeGreaterThan(lock);
-  });
-
   it('returns exactly the documented outcome columns', () => {
     // Layout-independent: the signature spans several lines, so compare the
     // normalised column list rather than an exact one-line string.
@@ -355,11 +406,18 @@ describe('static migration checks', () => {
     );
   });
 
-  it('adds the revision check, ownership key and pull index', () => {
+  it('adds the revision check, ownership key and cursor index', () => {
     const sql = flat(read(MIGRATION));
     expect(sql).toMatch(/constraint account_entries_revision_check check \(revision >= 1\)/);
+    expect(sql).toMatch(/constraint account_entries_sync_seq_check check \(sync_seq >= 1\)/);
     expect(sql).toMatch(/constraint account_entries_owner_id_id_key unique \(owner_id, id\)/);
-    expect(sql).toMatch(/create index if not exists account_entries_owner_updated_idx on public\.account_entries \(owner_id, updated_at, id\)/);
+    // The pre-existing key is only trusted when it is valid and non-partial; a
+    // partial or invalid index would break `on conflict (owner_id, id)`.
+    expect(sql).toMatch(/i\.indisvalid/);
+    expect(sql).toMatch(/i\.indpred is null/);
+    expect(sql).toMatch(/create unique index account_entries_owner_sync_seq_idx on public\.account_entries \(owner_id, sync_seq\)/);
+    // The unsafe (updated_at, id) pull index is gone.
+    expect(sql).not.toMatch(/account_entries_owner_updated_idx/);
   });
 
   it('sync_operations has the documented keys and cascade', () => {
@@ -367,6 +425,10 @@ describe('static migration checks', () => {
     expect(sql).toMatch(/owner_id uuid not null references auth\.users \(id\) on delete cascade/);
     expect(sql).toMatch(/operation_id uuid not null/);
     expect(sql).toMatch(/constraint sync_operations_pkey primary key \(owner_id, operation_id\)/);
+    expect(sql).toMatch(/expected_revision bigint not null check \(expected_revision >= 0\)/);
+    expect(sql).toMatch(/payload_hash text not null/);
+    expect(sql).toMatch(/deleted boolean not null/);
+    expect(sql).toMatch(/produced_revision bigint not null check \(produced_revision >= 1\)/);
     expect(sql).toMatch(/created_at timestamptz not null default now\(\)/);
   });
 
@@ -381,6 +443,30 @@ describe('static migration checks', () => {
     expect(sql).toContain('has_function_privilege');
   });
 
+  it('ships a read-only preflight that inventories the catalog and fails closed', () => {
+    const raw = read(PREFLIGHT);
+    const sql = flat(raw);
+    expect(sql).toMatch(/begin read only/);
+    // No DDL/DML in executable position, and no `set local role` either.
+    expect(sql).not.toMatch(/\b(create|alter|drop|grant|revoke|insert|update|delete)\b (table|function|policy|index|on|column)/);
+    // Inventory: table/columns, policies, privileges (explicit + effective),
+    // indexes with validity/partiality, constraints and functions.
+    expect(sql).toContain('a2. columns');
+    expect(sql).toContain('b. policies');
+    expect(sql).toContain('pg_policies');
+    expect(sql).toContain('aclexplode');
+    expect(sql).toContain('has_table_privilege');
+    expect(sql).toContain('indisvalid');
+    expect(sql).toContain('indpred');
+    expect(sql).toContain('pg_constraint');
+    expect(sql).toContain('prosecdef');
+    // Fail-closed checks and message.
+    expect(sql).toContain('row level security');
+    expect(sql).toContain('sync columns already exist');
+    expect(sql).toContain('a partial or invalid unique index on (owner_id, id) exists');
+    expect(raw).toMatch(/raise exception 'PREFLIGHT FAILED/);
+  });
+
   it('the rollback restores a select policy and destroys no user data', () => {
     const sql = code(read(ROLLBACK));
     // The only table it may drop is the derived operation log, never the entries.
@@ -393,9 +479,9 @@ describe('static migration checks', () => {
     expect(sql).toMatch(/create policy "account_select_own"/);
   });
 
-  it('the README documents the preconditions, order, rollback and security limits', () => {
+  it('the README documents the preflight, order, rollback and security limits', () => {
     const text = read(README).toLowerCase();
-    for (const phrase of ['precondition', 'rollback', 'redirect', 'confirm email', 'smtp', 'paus', 'publishable']) {
+    for (const phrase of ['preflight', 'rollback', 'redirect', 'confirm email', 'smtp', 'paus', 'publishable']) {
       expect(text, `README does not mention ${phrase}`).toContain(phrase);
     }
     expect(text).toContain('hmrmcpsrzrhwquyxdfta');

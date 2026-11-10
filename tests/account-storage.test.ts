@@ -12,6 +12,7 @@ import {
   queueAccountChange,
   replaceQueuedChange,
   applyServerRow,
+  cacheServerRows,
   getPending,
   acknowledgeChange,
   discardChange,
@@ -210,6 +211,51 @@ describe('account sync storage > import', () => {
     expect(await getAccountEntry('alice', 'a')).toBeDefined();
     expect(await getAccountEntry('alice', 'b')).toBeUndefined();
     expect(await getPending('alice', 'b')).toBeUndefined();
+  });
+});
+
+describe('account sync storage > pull never clobbers pending edits', () => {
+  it('keeps the pending local version and records a conflict when a pull brings a different server row', async () => {
+    const local = accountRecord('alice', 'e1', { revision: 0, entry: entryOf('e1', 'local edit') });
+    await queueAccountChange(local, change('alice', 'e1', { expectedRevision: 0, operationId: 'op-local', entry: entryOf('e1', 'local edit') }));
+    const pulled = accountRecord('alice', 'e1', { revision: 5, entry: entryOf('e1', 'server v5') });
+
+    const result = await cacheServerRows('alice', [pulled]);
+
+    expect(result.conflicted).toEqual(['e1']);
+    // The unacknowledged local version survives; the server row is not written over it.
+    expect(await getAccountEntry('alice', 'e1')).toEqual(local);
+    expect((await getPending('alice', 'e1'))?.operationId).toBe('op-local');
+    // The divergence is recorded for review instead of being silently discarded.
+    const [conflict] = await listConflicts('alice');
+    expect(conflict.entryId).toBe('e1');
+    expect(conflict.local?.operationId).toBe('op-local');
+    expect(conflict.local?.entry?.title).toBe('local edit');
+    expect(conflict.server).toEqual(pulled);
+  });
+
+  it('adopts a pulled row when nothing is pending for it', async () => {
+    const pulled = accountRecord('alice', 'e2', { revision: 2, entry: entryOf('e2', 'server') });
+
+    const result = await cacheServerRows('alice', [pulled]);
+
+    expect(result).toEqual({ cached: 1, conflicted: [] });
+    expect(await getAccountEntry('alice', 'e2')).toEqual(pulled);
+    expect(await listConflicts('alice')).toEqual([]);
+  });
+
+  it('keeps the pending local version without a conflict when the pull matches its base revision', async () => {
+    const local = accountRecord('alice', 'e3', { revision: 2, entry: entryOf('e3', 'local edit') });
+    await queueAccountChange(local, change('alice', 'e3', { expectedRevision: 2, operationId: 'op-3', entry: entryOf('e3', 'local edit') }));
+    const pulled = accountRecord('alice', 'e3', { revision: 2, entry: entryOf('e3', 'server base') });
+
+    const result = await cacheServerRows('alice', [pulled]);
+
+    expect(result.conflicted).toEqual([]);
+    // Still never overwritten: the queued local version is what will be pushed.
+    expect(await getAccountEntry('alice', 'e3')).toEqual(local);
+    expect(await getPending('alice', 'e3')).toBeDefined();
+    expect(await listConflicts('alice')).toEqual([]);
   });
 });
 

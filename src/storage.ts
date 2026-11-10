@@ -353,11 +353,6 @@ export function listMutations(accountId: string): Promise<MutationRecord[]> {
   return runTransaction([ACCOUNT_MUTATIONS], 'readonly', (transaction) => getAllRequest<MutationRecord>(transaction.objectStore(ACCOUNT_MUTATIONS), IDBKeyRange.bound([accountId, ''], [accountId, '\uffff']))).then((rows) => rows.filter((row) => row.accountId === accountId));
 }
 
-function putCaches(transaction: IDBTransaction, records: AccountRecord[]): void {
-  const entries = transaction.objectStore(ACCOUNT_ENTRIES);
-  for (const record of records) entries.put(record);
-}
-
 function deleteOutbox(transaction: IDBTransaction, accountId: string, entryId: string): void {
   transaction.objectStore(ACCOUNT_OUTBOX).delete(keyOf(accountId, entryId));
 }
@@ -499,10 +494,58 @@ export function clearConflict(accountId: string, entryId: string): Promise<void>
   }).then(() => undefined);
 }
 
-/** Pulls a server snapshot into the cache without touching pending outbox work. */
-export function cacheServerRows(accountId: string, rows: AccountRecord[]): Promise<void> {
+/**
+ * Adopts a server row as the account's authoritative version for one entry:
+ * writes the cache record, drops any queued local change for that entry, and
+ * clears its conflict marker — all in one transaction, so the local library can
+ * never end up half-resolved. This is what "use theirs" and "keep both" need for
+ * the original entry (the user has decided the server version wins there).
+ */
+export function acceptServerRow(accountId: string, record: AccountRecord): Promise<void> {
+  if (record.accountId !== accountId) throw new Error('Server row belongs to another account');
+  if (!accountId) throw new Error('Account required');
+  return runTransaction([ACCOUNT_ENTRIES, ACCOUNT_OUTBOX, ACCOUNT_CONFLICTS], 'readwrite', (transaction) => {
+    transaction.objectStore(ACCOUNT_ENTRIES).put(record);
+    deleteOutbox(transaction, accountId, record.entryId);
+    deleteConflict(transaction, accountId, record.entryId);
+  }).then(() => undefined);
+}
+
+/** What a pull did: rows adopted, and entries where a pending edit blocked one. */
+export type CacheServerRowsResult = { cached: number; conflicted: string[] };
+
+/**
+ * Pulls a server snapshot into the cache without ever discarding unacknowledged
+ * local work. A row whose entry still has a pending outbox change never replaces
+ * the local version: when the pulled row has moved past the revision that change
+ * was based on, the divergence is recorded as a conflict for the user to resolve
+ * instead of silently overwriting the edit. Rows with no pending work are
+ * adopted as before.
+ */
+export function cacheServerRows(accountId: string, rows: AccountRecord[]): Promise<CacheServerRowsResult> {
   const owned = rows.filter((row) => row.accountId === accountId);
-  return runTransaction([ACCOUNT_ENTRIES], 'readwrite', (transaction) => putCaches(transaction, owned)).then(() => undefined);
+  if (owned.length === 0) return Promise.resolve({ cached: 0, conflicted: [] });
+  const conflicted: string[] = [];
+  let cached = 0;
+  return runTransaction([ACCOUNT_ENTRIES, ACCOUNT_OUTBOX, ACCOUNT_CONFLICTS], 'readwrite', async (transaction) => {
+    const entries = transaction.objectStore(ACCOUNT_ENTRIES);
+    const outbox = transaction.objectStore(ACCOUNT_OUTBOX);
+    const conflicts = transaction.objectStore(ACCOUNT_CONFLICTS);
+    for (const row of owned) {
+      const pending = await getOne<OutboxRecord | undefined>(outbox, keyOf(accountId, row.entryId));
+      if (!pending) {
+        entries.put(row);
+        cached += 1;
+        continue;
+      }
+      // An unacknowledged local change owns this entry's cache slot. Keep it;
+      // a pulled row that disagrees with its base revision is a divergence.
+      if (pending.expectedRevision !== row.revision) {
+        conflicts.put({ accountId, entryId: row.entryId, local: pending, server: row, detectedAt: nowIso() } satisfies ConflictRecord);
+        conflicted.push(row.entryId);
+      }
+    }
+  }).then(() => ({ cached, conflicted }));
 }
 
 export function deleteCachedEntry(accountId: string, entryId: string): Promise<void> {

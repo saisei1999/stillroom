@@ -10,6 +10,8 @@
 //   * re-sending one operation_id is idempotent and reports already_applied;
 //   * tombstone state advances the revision and hides rows from plain SELECT
 //     while the pull RPC still reports the tombstone;
+//   * the sync_seq cursor pages in single-row steps without skipping, looping or
+//     re-serving a row;
 //   * an oversized payload is rejected server-side.
 //
 // Run from a terminal with network access, from the repo root:
@@ -112,7 +114,7 @@ async function main() {
   });
 
   await check('anon: list_account_entries denied', async () => {
-    const res = await anon.rpc(RPCS.list, { p_since: null, p_limit: 10 });
+    const res = await anon.rpc(RPCS.list, { p_after_seq: null, p_limit: 10 });
     record('anon: list_account_entries denied', !res.ok, `${res.status} ${describe(res)}`);
   });
 
@@ -211,7 +213,7 @@ async function main() {
   });
 
   await check('B: list_account_entries cannot see A row', async () => {
-    const res = await b.rpc(RPCS.list, { p_since: null, p_limit: 500 });
+    const res = await b.rpc(RPCS.list, { p_after_seq: null, p_limit: 500 });
     const rows = Array.isArray(res.data) ? res.data : [];
     const leaked = rows.some((r) => r.id === entryId);
     record('B: list_account_entries cannot see A row', res.ok && !leaked,
@@ -274,13 +276,36 @@ async function main() {
     if (!(del.row?.outcome === 'applied' && Number(del.row.revision) === 5)) {
       throw new Error(`delete returned ${del.row?.outcome} revision ${del.row?.revision}`);
     }
-    const pulled = await a.rpc(RPCS.list, { p_since: null, p_limit: 500 });
+    const pulled = await a.rpc(RPCS.list, { p_after_seq: null, p_limit: 500 });
     const rows = Array.isArray(pulled.data) ? pulled.data : [];
     const tombstone = rows.find((r) => r.id === entryId);
     record('pull: list_account_entries includes tombstone after delete',
       pulled.ok && tombstone?.deleted === true && Number(tombstone.revision) === 5
         && JSON.stringify(tombstone.payload) === '{}',
       `${pulled.status} tombstone=${JSON.stringify(tombstone ?? null).slice(0, 120)}`);
+  });
+
+  // --- 6b. Cursor pagination ----------------------------------------------
+  // Pages of one row, resuming from the last sync_seq. Strictly increasing
+  // seqs prove the cursor neither loops nor re-serves a row, and finding the
+  // tombstoned entry proves a tiny page size cannot strand it.
+  await check('pull: sync_seq cursor pages without skipping or duplicating', async () => {
+    const seen = new Set();
+    let cursor = null;
+    let lastSeq = -1;
+    for (let page = 0; page < 500; page += 1) {
+      const res = await a.rpc(RPCS.list, { p_after_seq: cursor, p_limit: 1 });
+      if (!res.ok) throw new Error(`page ${page} failed: ${res.status} ${describe(res)}`);
+      const rows = Array.isArray(res.data) ? res.data : [];
+      if (rows.length === 0) break;
+      const seq = Number(rows[0].sync_seq);
+      if (!(seq > lastSeq)) throw new Error(`cursor did not advance: ${seq} after ${lastSeq}`);
+      lastSeq = seq;
+      seen.add(rows[0].id);
+      cursor = seq;
+    }
+    record('pull: sync_seq cursor pages without skipping or duplicating', seen.has(entryId),
+      `last seq=${lastSeq}, saw entry=${seen.has(entryId)}`);
   });
 
   await check('tombstone: hidden from plain select', async () => {

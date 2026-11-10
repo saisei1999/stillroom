@@ -12,7 +12,8 @@ It is not part of `npm test`. `npm test` runs static checks only
 
 - Node 18 or newer (`fetch` is global). No `npm install` needed: `lib.mjs` is
   dependency-free, so this runs even before the app's dependencies are set up.
-- Migration `supabase/migrations/0001_account_sync.sql` applied **and**
+- `0000_preflight.sql` reporting `PREFLIGHT OK`, then migration
+  `supabase/migrations/0001_account_sync.sql` applied **and**
   `0002_account_sync_verify.sql` reporting `EXPECTED` everywhere.
 - Two **separate, email-confirmed** accounts. If both env emails resolve to the
   same user the script aborts immediately.
@@ -77,6 +78,7 @@ or Auth message, which is usually enough to tell "migration not applied" from
 | conflict | A stale `p_expected_revision` returns `conflict` with the **current** server revision and payload |
 | idempotent | Re-sending one `operation_id` returns `already_applied`, never bumps the revision, and never returns a stale payload if a later write advanced the row |
 | pull / tombstone | The pull RPC reports a deletion; a plain select hides it; a matching-revision update resurrects it |
+| cursor | Paging `list_account_entries(p_after_seq := last sync_seq, p_limit := 1)` strictly increases the cursor and still reaches the tombstoned entry, so a page boundary cannot strand a row |
 | validation | Oversized (>256 KiB), non-object and negative-revision input is rejected server-side; `expected = 0` never overwrites an existing row |
 | RPC-only | Even the owner cannot insert/update by direct REST, and cannot read `sync_operations` |
 

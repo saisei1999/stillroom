@@ -65,13 +65,33 @@ beforeEach(() => {
 
 afterEach(() => closeDatabase());
 
-function row(id: string, revision: number, deleted = false, payload: unknown = entryOf(id)): ServerRow {
-  return { id, revision, deleted, payload, updated_at: '2026-01-01T00:00:00.000Z' };
+// Pull rows carry the server-allocated `sync_seq` that the client resumes from.
+// A per-test monotonic counter keeps sequences distinct and increasing.
+let nextSeq = 1;
+
+function row(id: string, revision: number, deleted = false, payload: unknown = entryOf(id), syncSeq = nextSeq++): ServerRow {
+  return { id, revision, deleted, payload, sync_seq: syncSeq, updated_at: '2026-01-01T00:00:00.000Z' };
 }
 
-/** A mock TransportClient whose RPC replies we control per test. */
-function fakeClient(handler: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>): TransportClient {
-  return { rpc: async <R>(fn: string, args: Record<string, unknown>) => (await handler(fn, args)) as { data: R | null; error: unknown } };
+/**
+ * A mock TransportClient whose RPC replies we control per test. `currentUserId`
+ * defaults to the account under test; pass an override to simulate a session
+ * that changes identity during async work.
+ */
+function fakeClient(
+  handler: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>,
+  currentUserId: () => Promise<string | null> = async () => 'acct',
+): TransportClient {
+  return {
+    rpc: async <R>(fn: string, args: Record<string, unknown>) => (await handler(fn, args)) as { data: R | null; error: unknown },
+    currentUserId,
+  };
+}
+
+/** Returns the recorded identities in order, repeating the last one once exhausted. */
+function identitySequence(values: Array<string | null>): () => Promise<string | null> {
+  let index = 0;
+  return async () => values[Math.min(index++, values.length - 1)] ?? null;
 }
 
 describe('account sync transport > parsing and payloads', () => {
@@ -113,6 +133,36 @@ describe('account sync transport > pull', () => {
   it('propagates a server error without fabricating a result', async () => {
     const client = fakeClient(async () => ({ data: null, error: { code: 'pgrst301', message: 'jwt expired' } }));
     await expect(pullAccountEntries(client, null)).rejects.toThrow();
+  });
+
+  it('pages by sync_seq and never skips rows that share a timestamp', async () => {
+    const tied = '2026-01-01T00:00:00.000Z';
+    const pageOne = [row('a', 1, false, entryOf('a'), 10), row('b', 1, false, entryOf('b'), 11)];
+    const pageTwo = [row('c', 1, false, entryOf('c'), 12)];
+    for (const r of [...pageOne, ...pageTwo]) r.updated_at = tied; // identical timestamps
+    const seenCursors: (number | null)[] = [];
+    let call = 0;
+    const client = fakeClient(async (fn, args) => {
+      if (fn !== 'list_account_entries') throw new Error('unexpected fn');
+      seenCursors.push(args.p_after_seq as number | null);
+      call += 1;
+      // First page is deliberately full (PAGE_LIMIT rows) so the loop must continue.
+      if (call === 1) return { data: [...pageOne, ...Array.from({ length: 198 }, (_, i) => row(`f${i}`, 1, false, entryOf(`f${i}`), 100 + i))], error: null };
+      return { data: pageTwo, error: null };
+    });
+    const entries = await pullAccountEntries(client, null);
+    // Every tied row from both pages is returned: nothing was dropped at the boundary.
+    expect(entries.map((e) => e.id)).toContain('c');
+    expect(entries.length).toBe(201);
+    // The second request resumed strictly above the highest sequence of page one,
+    // not merely at the shared timestamp.
+    expect(seenCursors[0]).toBe(null);
+    expect(seenCursors[1]).toBe(297);
+  });
+
+  it('fails closed when a pulled row is missing its sync_seq cursor', async () => {
+    const client = fakeClient(async () => ({ data: [{ id: 'a', revision: 1, payload: entryOf('a'), deleted: false }], error: null }));
+    await expect(pullAccountEntries(client, null)).rejects.toThrow(/sync sequence/i);
   });
 });
 
@@ -225,6 +275,80 @@ describe('account sync transport > full sync pass', () => {
     const report = await syncPending(client, 'acct');
     expect(report.pushed).toBe(1);
     expect(await listPending('acct')).toEqual([]);
+  });
+});
+
+describe('account sync transport > account identity race', () => {
+  it('aborts without caching pulled rows when the session switches account mid-pull', async () => {
+    const local = accountRecord('acctA', 'a', { revision: 0 });
+    await queueAccountChange(local, change('acctA', 'a', { expectedRevision: 0 }));
+    let pushes = 0;
+    const client = fakeClient(
+      async (fn) => {
+        if (fn === 'list_account_entries') return { data: [row('a', 5, false, entryOf('a', 'belongs to B'))], error: null };
+        if (fn === 'apply_entry_change') {
+          pushes += 1;
+          return { data: [], error: null };
+        }
+        throw new Error('unexpected fn');
+      },
+      // The signed-in user changes while the pull request is in flight.
+      identitySequence(['acctA', 'acctA', 'acctB']),
+    );
+
+    await expect(syncPending(client, 'acctA')).rejects.toThrow(/signed-in account changed/i);
+
+    // No cross-account cache write: the other account's row never lands here.
+    expect(await listAccountEntries('acctA')).toEqual([local]);
+    // No cross-account push: the queued change is not uploaded under the new session.
+    expect(pushes).toBe(0);
+    expect(await listPending('acctA')).toHaveLength(1);
+    expect(await listConflicts('acctA')).toEqual([]);
+  });
+
+  it('aborts before pushing when the session switches account after the pull', async () => {
+    await queueAccountChange(accountRecord('acctA', 'a', { revision: 0 }), change('acctA', 'a', { expectedRevision: 0 }));
+    let pushes = 0;
+    const client = fakeClient(
+      async (fn) => {
+        if (fn === 'list_account_entries') return { data: [], error: null };
+        if (fn === 'apply_entry_change') {
+          pushes += 1;
+          return { data: [], error: null };
+        }
+        throw new Error('unexpected fn');
+      },
+      identitySequence(['acctA', 'acctA', 'acctA', 'acctB']),
+    );
+
+    await expect(syncPending(client, 'acctA')).rejects.toThrow(/signed-in account changed/i);
+    expect(pushes).toBe(0);
+    expect(await listPending('acctA')).toHaveLength(1);
+  });
+
+  it('does not commit a push that returned after the session switched account', async () => {
+    await queueAccountChange(accountRecord('acctA', 'a', { revision: 0 }), change('acctA', 'a', { expectedRevision: 0 }));
+    let pushes = 0;
+    const client = fakeClient(
+      async (fn) => {
+        if (fn === 'list_account_entries') return { data: [], error: null };
+        if (fn === 'apply_entry_change') {
+          pushes += 1;
+          const result: ApplyResult = { outcome: 'applied', revision: 1, payload: entryOf('a', 'server'), deleted: false, applied_revision: 1 };
+          return { data: [result], error: null };
+        }
+        throw new Error('unexpected fn');
+      },
+      // The identity check after the push response sees the new session.
+      identitySequence(['acctA', 'acctA', 'acctA', 'acctA', 'acctB']),
+    );
+
+    await expect(syncPending(client, 'acctA')).rejects.toThrow(/signed-in account changed/i);
+    expect(pushes).toBe(1); // the request was already in flight
+    // Nothing from that response is written to the local account for acctA.
+    expect(await listPending('acctA')).toHaveLength(1);
+    expect((await getAccountEntry('acctA', 'a'))?.revision).toBe(0);
+    expect(await listConflicts('acctA')).toEqual([]);
   });
 });
 

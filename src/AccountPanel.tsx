@@ -126,14 +126,28 @@ export function AccountPanel() {
     if (!accountId) return;
     setBusy(true);
     setError('');
-    const newReport = await runSync(accountId);
-    const pending = await listPending(accountId);
-    const conf = await listConflicts(accountId);
-    const summary = summarizeSync(newReport, pending, conf);
-    setReport({ summary, error: newReport.lastError ? friendlySyncError({ code: newReport.errorKind ?? undefined, message: newReport.lastError }) : null, waiting: isWaiting(newReport) });
-    setPendingCount(pending.length);
-    setConflicts(conf);
-    setBusy(false);
+    try {
+      const newReport = await runSync(accountId);
+      const pending = await listPending(accountId);
+      const conf = await listConflicts(accountId);
+      const summary = summarizeSync(newReport, pending, conf);
+      setReport({ summary, error: newReport.lastError ? friendlySyncError({ code: newReport.errorKind ?? undefined, message: newReport.lastError }) : null, waiting: isWaiting(newReport) });
+      setPendingCount(pending.length);
+      setConflicts(conf);
+    } catch (failure) {
+      // A session that changed mid-sync aborts the pass deliberately; surface it
+      // honestly instead of leaving an unhandled rejection and a stuck "busy".
+      setReport({ summary: 'Sync stopped before it finished. Nothing was removed from this device.', error: friendlySyncError(failure), waiting: true });
+      try {
+        const pending = await listPending(accountId);
+        setPendingCount(pending.length);
+        setConflicts(await listConflicts(accountId));
+      } catch {
+        /* status refresh is best-effort */
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function planImportChoice() {

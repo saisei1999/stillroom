@@ -1,8 +1,8 @@
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
-import { acknowledgeChange, discardChange, closeDatabase, queueAccountChange, listPending, getAccountEntry, type AccountRecord, type OutboxRecord, type Entry } from '../src/storage';
-import { summarizeSync, conflictPreview, routeLocalMutation, setActiveAccount, queueAccountSave, queueAccountDelete, resolveConflictKeepBoth, isWaiting, type ImportChoice } from '../src/sync-control';
+import { acknowledgeChange, discardChange, closeDatabase, queueAccountChange, listPending, listConflicts, storeConflict, getAccountEntry, type AccountRecord, type OutboxRecord, type Entry } from '../src/storage';
+import { summarizeSync, conflictPreview, routeLocalMutation, setActiveAccount, queueAccountSave, queueAccountDelete, resolveConflictKeepBoth, resolveConflictUseTheirs, isWaiting, runSync, SYNC_ENABLED, type ImportChoice } from '../src/sync-control';
 import type { SyncReport } from '../src/account-sync';
 
 const entryOf = (id: string, title = id): Entry => ({
@@ -107,16 +107,71 @@ describe('sync control > mutation routing', () => {
     expect(await listPending('acct')).toMatchObject([{ operationId: newer.operationId, expectedRevision: 3, entry: null }]);
   });
 
-  it('gives a rebased keep-both operation a new identity', async () => {
-    const local = change('acct', 'a', { expectedRevision: 2 });
-    const conflict = { accountId: 'acct', entryId: 'a', local, server: record('acct', 'a', { revision: 3 }), detectedAt: '2026-01-01T00:00:00.000Z' };
-    await queueAccountChange(record('acct', 'a', { revision: 2 }), local);
+  it('keeps BOTH sides: local copy as a new entry, server version on the original id', async () => {
+    const local = change('acct', 'a', { expectedRevision: 2, entry: entryOf('a', 'my local edit') });
+    const server = record('acct', 'a', { revision: 3, entry: entryOf('a', 'the server version') });
+    const conflict = { accountId: 'acct', entryId: 'a', local, server, detectedAt: '2026-01-01T00:00:00.000Z' };
+    await queueAccountChange(record('acct', 'a', { revision: 2, entry: local.entry }), local);
+    await storeConflict(conflict);
+
     await resolveConflictKeepBoth('acct', conflict);
-    const original = (await listPending('acct')).find((op) => op.entryId === 'a');
-    expect(original?.operationId).not.toBe(local.operationId);
-    expect(original?.expectedRevision).toBe(3);
-    expect(await acknowledgeChange('acct', 'a', local.operationId, 3)).toBe('superseded');
-    expect((await listPending('acct')).find((op) => op.entryId === 'a')?.operationId).toBe(original?.operationId);
+
+    const pending = await listPending('acct');
+    // The original id keeps the SERVER version and has nothing queued for it, so
+    // the local edit can never be pushed over the server copy.
+    expect(pending.some((op) => op.entryId === 'a')).toBe(false);
+    const original = await getAccountEntry('acct', 'a');
+    expect(original?.entry?.title).toBe('the server version');
+    expect(original?.revision).toBe(3);
+    // The local version survives as a brand-new entry queued as a create.
+    const copyOp = pending.find((op) => op.entryId !== 'a');
+    expect(copyOp).toBeDefined();
+    expect(copyOp?.expectedRevision).toBe(0);
+    expect(copyOp?.entry?.title).toContain('conflict copy');
+    expect(copyOp?.entry?.title).toContain('my local edit');
+    // The conflict is resolved, not left dangling.
+    expect(await listConflicts('acct')).toEqual([]);
+  });
+
+  it('never overwrites the server copy when keeping both', async () => {
+    const local = change('acct', 'a', { expectedRevision: 2, entry: entryOf('a', 'my local edit') });
+    const server = record('acct', 'a', { revision: 3, entry: entryOf('a', 'the server version') });
+    const conflict = { accountId: 'acct', entryId: 'a', local, server, detectedAt: '2026-01-01T00:00:00.000Z' };
+    await queueAccountChange(record('acct', 'a', { revision: 2, entry: local.entry }), local);
+    await resolveConflictKeepBoth('acct', conflict);
+    // A fresh operation id from the old (pre-fix) rebase must not be acknowledged
+    // as if it were still queued for the original id.
+    expect(await acknowledgeChange('acct', 'a', local.operationId, 3)).toBe('unknown-operation');
+  });
+
+  it('"use theirs" adopts the server row, drops the local edit and clears the conflict', async () => {
+    const local = change('acct', 'a', { expectedRevision: 2, entry: entryOf('a', 'my local edit') });
+    const server = record('acct', 'a', { revision: 5, entry: entryOf('a', 'the server version') });
+    const conflict = { accountId: 'acct', entryId: 'a', local, server, detectedAt: '2026-01-01T00:00:00.000Z' };
+    await queueAccountChange(record('acct', 'a', { revision: 2, entry: local.entry }), local);
+    await storeConflict(conflict);
+
+    await resolveConflictUseTheirs('acct', conflict);
+
+    const cached = await getAccountEntry('acct', 'a');
+    expect(cached?.entry?.title).toBe('the server version');
+    expect(cached?.revision).toBe(5);
+    expect(await listPending('acct')).toEqual([]);
+    expect(await listConflicts('acct')).toEqual([]);
+  });
+
+  it('"use theirs" accepts a server deletion as a tombstone', async () => {
+    const local = change('acct', 'a', { expectedRevision: 2, entry: entryOf('a', 'my local edit') });
+    const server = record('acct', 'a', { revision: 4, entry: null });
+    const conflict = { accountId: 'acct', entryId: 'a', local, server, detectedAt: '2026-01-01T00:00:00.000Z' };
+    await queueAccountChange(record('acct', 'a', { revision: 2, entry: local.entry }), local);
+    await storeConflict(conflict);
+
+    await resolveConflictUseTheirs('acct', conflict);
+
+    expect((await getAccountEntry('acct', 'a'))?.entry).toBeNull();
+    expect(await listPending('acct')).toEqual([]);
+    expect(await listConflicts('acct')).toEqual([]);
   });
 
   it('queues a durable delete tombstone for an account-owned entry', async () => {
@@ -127,6 +182,14 @@ describe('sync control > mutation routing', () => {
     expect(pending[0].expectedRevision).toBe(2);
     // Account cache now reflects the tombstone expectation.
     expect((await getAccountEntry('acct', 'a'))?.entry).toBeNull();
+  });
+});
+
+describe('sync control > disabled build', () => {
+  it('keeps sync disabled and resolves a no-op report without touching the network', async () => {
+    expect(SYNC_ENABLED).toBe(false);
+    const report = await runSync('acct');
+    expect(report).toMatchObject({ pushed: 0, pulled: 0, conflictsDetected: 0, waiting: 0, retries: 0, lastError: null, errorKind: null, paused: false });
   });
 });
 
