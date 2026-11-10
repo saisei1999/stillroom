@@ -24,4 +24,38 @@ Use the public project URL and publishable key only, never a secret/service-role
 Do not wire the draft schema or display a working sync option until these gates pass. Current app remains local-only.
 
 ## Current status
-Account UI and a project-specific publishable client key are prepared. The Supabase project has an account_entries table with RLS and authenticated per-owner policies; a transactional simulated check confirmed cross-account reads and inserts are denied, while anon SELECT privilege was verified absent. Full two-account end-to-end tests, update/delete isolation tests, local-first sync, migration, and password recovery remain unfinished. The UI does not upload entries. The free built-in SMTP only delivers to project team addresses and is rate-limited; configure custom SMTP before general registration.
+A complete local-first sync implementation is now built and tested behind a
+runtime flag. Accounts sign in with email/password; `entryPayloadSize` and RLS
+guard payload sizes; the durable outbox, account-partitioned caches, revision
+checks, conflict preservation and explicit conflict resolution are implemented
+and covered by fixture tests. Sync is **not enabled**: `SYNC_ENABLED` in
+`src/sync-control.ts` is `false`, so the shipped app behaves exactly as the
+local-only build does until the live gate below passes.
+
+Live verification still pending: apply `migrations/0001_account_sync.sql`, run
+the `0002` audit, and pass `supabase/verify/authorization.mjs` against two
+confirmed accounts before flipping the flag. Until then the app makes no network
+RPC calls and queues no outbox writes.
+
+## How the pieces fit (for reviewers)
+- `src/sync-core.ts` — pure domain decisions (reconcile, retry schedule,
+  validation, conflict classification, import planning, conflict-copy).
+- `src/storage.ts` — IndexedDB v3 with account-partitioned caches and a durable,
+  revision-checked outbox written atomically with local changes.
+- `src/account-sync.ts` — the transport that consumes `apply_entry_change` and
+  `list_account_entries`, validates every server row, and never acknowledges a
+  change until the server does.
+- `src/sync-control.ts` — the tested controller tying UI to storage + transport,
+  behind `SYNC_ENABLED`.
+- `src/AccountPanel.tsx` / `src/main.tsx` — sign-in, import choice, honest sync
+  status, conflict resolution, cache removal, and gated save/delete routing.
+- `supabase/migrations/0001_account_sync.sql` — the reviewed migration (client
+  loses all write grants; writes only via the revision-checked, idempotent,
+  `search_path=''` security-definer RPC; tombstones; cursor pull).
+
+## Server schema (migration written, not yet applied)
+`supabase/migrations/0001_account_sync.sql` supersedes the handoff draft and is the only file to apply; `0002_account_sync_verify.sql` is a read-only audit; `0001_account_sync_rollback.sql` reverses it without deleting user data. Step-by-step instructions and the precondition queries (the existing table's key/columns are still unconfirmed) are in `supabase/README.md`.
+
+Design as written: `account_entries` gains `revision`/`deleted`, named checks and a pull index, and the client loses every write privilege — `authenticated` keeps only owner-scoped `select` of live rows. Writes go through `apply_entry_change(p_id, p_operation_id, p_expected_revision, p_payload, p_deleted)`, which returns `(outcome, revision, payload, deleted, applied_revision)` with outcome `applied`, `already_applied` or `conflict`; tombstones are stored as `{}` and revive as ordinary updates. Pulls use `list_account_entries(p_since, p_limit)`, which returns the caller's rows including tombstones in `(updated_at, id)` order, limit clamped to 1..500. Both are `security definer set search_path = ''`, executable only by `authenticated`.
+
+What is verified today: static migration checks in `tests/rls-fixtures.test.ts` (text analysis only — they cannot prove SQL parses or that RLS denies anything). Still open before sync may ship: applying 0001 in the dashboard, running the 0002 audit, and passing `supabase/verify/authorization.mjs` against two confirmed accounts. The RPC contract is not yet consumed by any client code.
