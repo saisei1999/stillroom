@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { transportOf } from '../src/sync-control';
+import { SyncIdentityError } from '../src/account-sync';
 
 describe('account-pinned requests', () => {
+  it('does not claim an in-flight request was never sent', () => {
+    expect(new SyncIdentityError().message).not.toMatch(/nothing was sent/i);
+  });
   it('refuses to send if the current session belongs to another account', async () => {
     const getSession = vi.fn().mockResolvedValue({ data: { session: { user: { id: 'B' }, access_token: 'token-B' } }, error: null });
     const makeClient = vi.fn();

@@ -74,7 +74,7 @@ export class SyncAccountError extends Error {
 
 /** Raised when the authenticated session no longer matches the account being synced. */
 export class SyncIdentityError extends SyncAccountError {
-  constructor(message = 'Sync stopped because the signed-in account changed. Nothing was sent or saved to the account.') {
+  constructor(message = 'Sync stopped because the signed-in account changed. Check the account and sync again to confirm its latest state.') {
     super(message, false);
     this.name = 'SyncIdentityError';
   }
