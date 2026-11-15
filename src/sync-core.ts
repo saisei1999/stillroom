@@ -14,7 +14,7 @@
  */
 
 /** The canonical stillroom entry shape. Owned here; `storage.ts` re-exports it. */
-export type Entry = { id: string; title: string; type: string; status: string; color: string; progress: string; tags: string[]; rating?: number; notes: string; createdAt: string; productUrl?: string; price?: string; priority?: string };
+export type Entry = { id: string; title: string; type: string; status: string; color: string; progress: string; tags: string[]; rating?: number; notes: string; createdAt: string; productUrl?: string; price?: string; priority?: string; artworkUrl?: string };
 
 /** The latest acknowledged-or-pending server view cached locally, scoped to one account. */
 export type AccountRecord = { accountId: string; entryId: string; entry: Entry | null; revision: number };
@@ -113,8 +113,8 @@ export function parseEntry(raw: unknown): Entry {
   for (const tag of rawTags) tags.push(tag);
   const rawRating = raw.rating;
   if (rawRating !== undefined && (typeof rawRating !== 'number' || !Number.isInteger(rawRating) || rawRating < 1 || rawRating > 5)) throw new SyncValidationError('rejected', 'Entry rating must be a whole number from 1 to 5.');
-  const optional: Pick<Entry, 'productUrl' | 'price' | 'priority'> = {};
-  for (const key of ['productUrl', 'price', 'priority'] as const) {
+  const optional: Pick<Entry, 'productUrl' | 'price' | 'priority' | 'artworkUrl'> = {};
+  for (const key of ['productUrl', 'price', 'priority', 'artworkUrl'] as const) {
     const value = raw[key];
     if (value !== undefined) {
       if (typeof value !== 'string') throw new SyncValidationError('rejected', `Entry field "${key}" is not text.`);

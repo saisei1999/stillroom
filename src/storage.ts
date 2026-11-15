@@ -235,8 +235,8 @@ export function sanitizeEntry(value: unknown): Entry | undefined {
   if (!Array.isArray(tags) || tags.length > 100 || !tags.every((tag) => typeof tag === 'string' && tag.length > 0 && tag.length <= 60)) return undefined;
   const rating = raw.rating;
   if (rating !== undefined && (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5)) return undefined;
-  const optional: Pick<Entry, 'productUrl' | 'price' | 'priority'> = {};
-  for (const key of ['productUrl', 'price', 'priority'] as const) {
+  const optional: Pick<Entry, 'productUrl' | 'price' | 'priority' | 'artworkUrl'> = {};
+  for (const key of ['productUrl', 'price', 'priority', 'artworkUrl'] as const) {
     if (raw[key] !== undefined) {
       if (typeof raw[key] !== 'string') return undefined;
       optional[key] = raw[key];

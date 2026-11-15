@@ -7,7 +7,7 @@ A calm, personal home for games, movies, TV/anime, manga, books and music. Searc
 - Add manually or find a title via a supported source; choose among available artwork or upload a cover. Editing and manual fallback always work offline.
 - Browse a gallery; search locally, filter by medium and status, and sort by title or updated date.
 - Planned, in progress, completed, paused and dropped; optional 0–5 rating (half steps), notes/review, tags and progress with optional total/unit. One-tap increment never silently exceeds a known total.
-- Continue shelf, wishlist (planned items), simple user collections, and quiet counts. Editable title and metadata remain user-controlled.
+- Continue shelf, planned media, simple user collections, and quiet counts. Physical-product wishlists belong in a separate app. Editable title and metadata remain user-controlled.
 - Versioned complete JSON backup/restore including uploaded image bytes, plus readable Markdown files and image assets for future Obsidian use. Markdown is a one-way export in v1, not live sync.
 
 ## Acceptance
