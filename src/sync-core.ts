@@ -14,7 +14,7 @@
  */
 
 /** The canonical stillroom entry shape. Owned here; `storage.ts` re-exports it. */
-export type Entry = { id: string; title: string; type: string; status: string; color: string; progress: string; tags: string[]; rating?: number; notes: string; createdAt: string; productUrl?: string; price?: string; priority?: string; artworkUrl?: string };
+export type Entry = { id: string; title: string; type: string; status: string; color: string; progress: string; tags: string[]; rating?: number; notes: string; createdAt: string; productUrl?: string; price?: string; priority?: string; artworkUrl?: string; noteSections?: { id: string; title: string; body: string }[] };
 
 /** The latest acknowledged-or-pending server view cached locally, scoped to one account. */
 export type AccountRecord = { accountId: string; entryId: string; entry: Entry | null; revision: number };
@@ -121,7 +121,9 @@ export function parseEntry(raw: unknown): Entry {
       optional[key] = value;
     }
   }
-  return { id, title, type, status, color, progress, tags, notes, createdAt, ...(rawRating === undefined ? {} : { rating: rawRating }), ...optional };
+  const noteSections = raw.noteSections;
+  if (noteSections !== undefined && (!Array.isArray(noteSections) || noteSections.length > 500 || !noteSections.every(section => isRecord(section) && typeof section.id === 'string' && section.id.length > 0 && section.id.length <= 200 && typeof section.title === 'string' && section.title.length <= 120 && typeof section.body === 'string' && section.body.length <= 50000))) throw new SyncValidationError('rejected', 'Invalid note sections.');
+  return { id, title, type, status, color, progress, tags, notes, createdAt, ...(rawRating === undefined ? {} : { rating: rawRating }), ...optional, ...(noteSections === undefined ? {} : { noteSections: noteSections as Entry['noteSections'] }) };
 }
 
 /**
@@ -462,7 +464,7 @@ export function conflictCopy(local: Entry, now: string, makeId: () => string = (
   if (typeof now !== 'string' || !now.trim()) throw new SyncValidationError('rejected', 'A timestamp is required for the conflict copy.');
   const id = makeId();
   if (!isId(id) || id === source.id) throw new SyncValidationError('rejected', 'A conflict copy needs a new, unique id.');
-  const base = { id, title: `${source.title} (conflict copy)`, type: source.type, status: source.status, color: source.color, progress: source.progress, tags: [...source.tags], notes: source.notes, createdAt: now };
+  const base = { ...source, id, title: `${source.title} (conflict copy)`, type: source.type, status: source.status, color: source.color, progress: source.progress, tags: [...source.tags], notes: source.notes, createdAt: now };
   const rating = source.rating;
   return rating === undefined ? base : { ...base, rating };
 }

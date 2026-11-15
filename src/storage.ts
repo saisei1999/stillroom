@@ -242,6 +242,8 @@ export function sanitizeEntry(value: unknown): Entry | undefined {
       optional[key] = raw[key];
     }
   }
+  const noteSections = raw.noteSections;
+  if (noteSections !== undefined && (!Array.isArray(noteSections) || noteSections.length > 500 || !noteSections.every(section => section && typeof section === 'object' && typeof section.id === 'string' && section.id.length > 0 && section.id.length <= 200 && typeof section.title === 'string' && section.title.length <= 120 && typeof section.body === 'string' && section.body.length <= 50000))) return undefined;
   return {
     id,
     title,
@@ -252,6 +254,7 @@ export function sanitizeEntry(value: unknown): Entry | undefined {
     tags: [...new Set(tags as string[])],
     ...(rating === undefined ? {} : { rating }),
     notes,
+    ...(noteSections === undefined ? {} : { noteSections: noteSections.map((section: {id:string;title:string;body:string}) => ({id:section.id,title:section.title,body:section.body})) }),
     createdAt,
     ...optional,
   };
