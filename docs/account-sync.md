@@ -1,5 +1,30 @@
 # Account sync implementation plan (not yet enabled)
 
+## Live verification update
+
+On 2026-11-14 the hosted preflight and migration were run. The owner reported a
+passing corrected two-account authorization run. A browser preview with sync
+temporarily enabled pulled and edited entries across two separate localhost
+origins, including a same-entry conflict resolved with both versions preserved.
+The preview also propagated a test-entry deletion to the other origin and hid
+account A's cache after sign-out before displaying account B's entries. With a
+temporary transport failure injected into the preview, a new entry survived a
+reload and synced successfully after the failure was removed. This was a
+simulated transport outage, not a physical network-disconnection test.
+The authorization test's initial sample rows lacked payload IDs; six test-only
+rows were repaired in place. The audit's case-sensitive policy comparison was
+corrected for PostgreSQL's uppercase `NOT` rendering.
+
+Account requests now pin the authenticated account's access token; the live
+service accepted a pinned request and focused tests cover a session switch.
+The preview automatically syncs on sign-in, saves, reconnect and a 30-second
+poll, serializes passes per account, and applies retry backoff. A simulated
+outage was retried automatically after reopening the preview.
+
+The default build remains disabled. Still required: a physical network outage,
+backup/restore testing, deployment-origin verification, and independent review
+of the in-flight sign-out behavior before enabling sync.
+
 ## Product decisions
 Email/password sign-in with Supabase Auth; existing GitHub Pages static host remains. Entries stay locally available offline and are associated with one account only after an explicit migration choice. Never silently overwrite or upload a local library. Users can continue locally signed out. Supabase free projects can pause; communicate offline and retry state and retain pending writes. Browser storage remains vulnerable to eviction/clearing; JSON backup remains available.
 
@@ -23,5 +48,71 @@ Use the public project URL and publishable key only, never a secret/service-role
 
 Do not wire the draft schema or display a working sync option until these gates pass. Current app remains local-only.
 
-## Current status
-Account UI and a project-specific publishable client key are prepared. The Supabase project has an account_entries table with RLS and authenticated per-owner policies; a transactional simulated check confirmed cross-account reads and inserts are denied, while anon SELECT privilege was verified absent. Full two-account end-to-end tests, update/delete isolation tests, local-first sync, migration, and password recovery remain unfinished. The UI does not upload entries. The free built-in SMTP only delivers to project team addresses and is rate-limited; configure custom SMTP before general registration.
+## Current status: built, still disabled, not yet safe to enable
+Sync remains disabled (`SYNC_ENABLED = false` in `src/sync-control.ts`), so the
+shipped app is still the local-only build and makes no network RPC calls.
+
+Verified in this repo: `npm test` passes (163 tests) and `npm run build` succeeds.
+The production bundle was inspected and contains **none** of the sync UI strings
+(e.g. "Sync now", "Keep mine"): the bundler constant-folds `SYNC_ENABLED = false`
+and eliminates the whole branch, so the flag-off build provably carries no sync
+code path.
+
+Draft pull request: https://github.com/saisei1999/stillroom/pull/1
+
+### Fixed after review
+- **Pull could skip rows.** The timestamp cursor (`updated_at > p_since`) could
+  permanently drop rows sharing a timestamp. Replaced with a `sync_seq` bigint
+  allocated in commit order under a per-owner advisory lock; the client resumes
+  strictly above it and fails closed if a pulled row has no sequence.
+- **RPC result shape.** `apply_entry_change` returns a table, so PostgREST sends a
+  one-element array; the client treated it as an object and would never have
+  acknowledged a real push. It now validates exactly one row.
+- **Pull overwrote unacknowledged local edits.** `cacheServerRows` now keeps the
+  pending local version and records a conflict instead of clobbering it.
+- **Operation-ID reuse.** Queued saves/deletes and keep-both mint fresh operation
+  ids, and the migration binds an operation id to its request content, so a
+  changed payload can no longer masquerade as an already-applied operation.
+- **Account-identity race.** The transport now verifies the *authenticated*
+  identity before and after every network step, so a session change mid-sync
+  aborts rather than caching or pushing against the wrong account.
+- **Conflict resolution was wrong.** "Use theirs" now adopts the server row
+  (including a server deletion) and clears the conflict; "keep both" preserves the
+  local version as a new entry while the original id keeps the server version.
+- **Migration preflight.** A read-only `0000_preflight.sql` inventories policies,
+  privileges, indexes and constraints and fails closed; it refuses to run if
+  `revision`/`deleted`/`sync_seq` already exist, so prior tombstone state cannot
+  be silently reset.
+- **"Sync now" was disabled by pending work.** The button was disabled whenever
+  changes were queued — exactly when it was needed — so queued work could never
+  be pushed by hand. It is now disabled only while a sync is already running.
+  (Currently dead-code-eliminated while the flag is off; the fix takes effect
+  when sync is enabled.)
+
+### Still required before enabling
+1. Independently review in-flight sign-out: requests are pinned to the intended account's token, but an already-sent request cannot be retracted after sign-out.
+2. Test a physical network disconnection and reconnection, account backup and restore, and the deployed Pages origin. The local tests and simulated transport outage do not replace these checks.
+3. Exercise automatic retry and conflict resolution under actual device and network interruptions.
+
+### Fixed while verifying the SQL locally
+`supabase/verify/authorization.mjs` asserted that account B calling
+`apply_entry_change` for account A's entry id with `p_expected_revision = 0`
+must return `conflict`. It does not: ids are unique per **owner**, so B
+legitimately creates its *own* row under that uuid while A's row is untouched.
+The check now proves the real security property — A's row is unchanged.
+
+### Library view
+`src/library-view.ts` merges the local library with the active account's cached
+entries (tombstones hidden, account record wins on the same id), and
+`subscribeActiveAccount` / `notifyAccountDataChanged` refresh the gallery when the
+account changes or a pull/conflict resolution updates the cache. While
+`SYNC_ENABLED` is false the merge is skipped entirely, so the rendered list is
+identical to the local-only build.
+
+### Note on the earlier cleanup
+An earlier instruction in this session told the user to drop the `revision` and
+`deleted` columns and the `sync_operations` table. That advice was wrong and has
+been removed. A read-only check of the live project shows both test accounts have
+zero rows and no successful sync write ever occurred, so nothing was lost — but
+the instruction should never have been given. Do not drop those columns.
+
