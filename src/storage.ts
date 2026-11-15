@@ -209,8 +209,8 @@ export function makeBackup(entries: Entry[]) {
   return JSON.stringify({ format: 'stillroom', version: 1, exportedAt: new Date().toISOString(), entries }, null, 2);
 }
 
-const TYPES = new Set(['Game', 'Movie', 'TV / Anime', 'Manga', 'Book', 'Music']);
-const STATUSES = new Set(['Planned', 'In progress', 'Completed', 'Paused', 'Dropped']);
+const TYPES = new Set(['Game', 'Movie', 'TV / Anime', 'Manga', 'Book', 'Music', 'Product']);
+const STATUSES = new Set(['Planned', 'In progress', 'Completed', 'Paused', 'Dropped', 'Purchased', 'Using']);
 const COLORS = new Set(['blue', 'ochre', 'rose', 'slate', 'violet', 'teal']);
 
 /** Rebuilds a trusted Entry from untrusted data, or returns undefined. Shared with sync validation. */
@@ -235,6 +235,13 @@ export function sanitizeEntry(value: unknown): Entry | undefined {
   if (!Array.isArray(tags) || tags.length > 100 || !tags.every((tag) => typeof tag === 'string' && tag.length > 0 && tag.length <= 60)) return undefined;
   const rating = raw.rating;
   if (rating !== undefined && (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5)) return undefined;
+  const optional: Pick<Entry, 'productUrl' | 'price' | 'priority'> = {};
+  for (const key of ['productUrl', 'price', 'priority'] as const) {
+    if (raw[key] !== undefined) {
+      if (typeof raw[key] !== 'string') return undefined;
+      optional[key] = raw[key];
+    }
+  }
   return {
     id,
     title,
@@ -246,6 +253,7 @@ export function sanitizeEntry(value: unknown): Entry | undefined {
     ...(rating === undefined ? {} : { rating }),
     notes,
     createdAt,
+    ...optional,
   };
 }
 

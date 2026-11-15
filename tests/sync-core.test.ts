@@ -171,6 +171,12 @@ describe('parseServerEntry (untrusted network input)', () => {
     expect(parseEntry(book)).toEqual(book);
     expectValidationFailure(() => parseEntry({ ...book, rating: 9 }));
   });
+
+  it('preserves valid product fields and rejects malformed values', () => {
+    const product = { ...book, type: 'Product', status: 'Purchased', productUrl: 'https://example.com/item', price: '49.99', priority: 'High' };
+    expect(parseEntry(product)).toEqual(product);
+    expectValidationFailure(() => parseEntry({ ...product, price: 49.99 }));
+  });
 });
 
 describe('payload size', () => {

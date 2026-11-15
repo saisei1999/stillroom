@@ -14,7 +14,7 @@
  */
 
 /** The canonical stillroom entry shape. Owned here; `storage.ts` re-exports it. */
-export type Entry = { id: string; title: string; type: string; status: string; color: string; progress: string; tags: string[]; rating?: number; notes: string; createdAt: string };
+export type Entry = { id: string; title: string; type: string; status: string; color: string; progress: string; tags: string[]; rating?: number; notes: string; createdAt: string; productUrl?: string; price?: string; priority?: string };
 
 /** The latest acknowledged-or-pending server view cached locally, scoped to one account. */
 export type AccountRecord = { accountId: string; entryId: string; entry: Entry | null; revision: number };
@@ -112,10 +112,16 @@ export function parseEntry(raw: unknown): Entry {
   const tags: string[] = [];
   for (const tag of rawTags) tags.push(tag);
   const rawRating = raw.rating;
-  if (rawRating === undefined) return { id, title, type, status, color, progress, tags, notes, createdAt };
-  if (typeof rawRating !== 'number' || !Number.isInteger(rawRating) || rawRating < 1 || rawRating > 5) throw new SyncValidationError('rejected', 'Entry rating must be a whole number from 1 to 5.');
-  const rating: number = rawRating;
-  return { id, title, type, status, color, progress, tags, rating, notes, createdAt };
+  if (rawRating !== undefined && (typeof rawRating !== 'number' || !Number.isInteger(rawRating) || rawRating < 1 || rawRating > 5)) throw new SyncValidationError('rejected', 'Entry rating must be a whole number from 1 to 5.');
+  const optional: Pick<Entry, 'productUrl' | 'price' | 'priority'> = {};
+  for (const key of ['productUrl', 'price', 'priority'] as const) {
+    const value = raw[key];
+    if (value !== undefined) {
+      if (typeof value !== 'string') throw new SyncValidationError('rejected', `Entry field "${key}" is not text.`);
+      optional[key] = value;
+    }
+  }
+  return { id, title, type, status, color, progress, tags, notes, createdAt, ...(rawRating === undefined ? {} : { rating: rawRating }), ...optional };
 }
 
 /**
