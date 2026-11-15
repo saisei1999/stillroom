@@ -86,28 +86,9 @@ Draft pull request: https://github.com/saisei1999/stillroom/pull/1
   when sync is enabled.)
 
 ### Still required before enabling
-1. **Supabase production is still unverified.** The SQL has now been *executed
-   locally against a real PostgreSQL engine* (PGlite/WASM):
-   `supabase/verify/pg-local-verify.mjs` — 28/28 checks, covering preflight,
-   `0001` applying, the `0002` audit, create/update/conflict/idempotency,
-   tombstones and resurrection, skip-free `sync_seq` paging across tied
-   timestamps, anon denial, cross-account isolation, and the rollback — and
-   `supabase/verify/pg-refusal-verify.mjs` — 7/7 checks proving the migration
-   *fails closed*: it refuses a table that already has `revision`/`deleted`, a
-   table missing `payload`, a partial key with duplicate `(owner_id, id)` rows,
-   an unexplained extra grantee, and a re-apply over an existing install, leaving
-   the schema untouched each time. That is strong evidence about the SQL, but
-   there is still no GoTrue, no PostgREST and no Supabase-managed roles locally,
-   so the hosted project must be exercised once (preflight, then `0001`, then
-   `0002`).
-2. **The live two-account gate has not passed.** Run
-   `supabase/verify/authorization.mjs` against the hosted project after applying
-   the migration. A missing function returning 404 is not an authorization pass.
-3. `currentUserId` reads the locally stored session rather than server-verifying
-   the token on every check; an already-sent request cannot be retracted.
-4. Real-browser IndexedDB and two real browser profiles remain untested; the
-   two-device convergence test (`tests/two-device-sync.test.ts`) covers the
-   logic against a server model, not a real network.
+1. Review the account identity race: `currentUserId` reads the locally stored session rather than server-verifying the token on every check; an already-sent request cannot be retracted.
+2. Test a physical network disconnection and reconnection, account backup and restore, and the deployed Pages origin. The local tests and simulated transport outage do not replace these checks.
+3. Implement automatic synchronization and retry. The tested preview currently requires the user to press **Sync now**.
 
 ### Fixed while verifying the SQL locally
 `supabase/verify/authorization.mjs` asserted that account B calling
