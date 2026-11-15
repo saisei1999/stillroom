@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mergeLibraryEntries, shouldSaveToAccount } from '../src/library-view';
-import type { AccountRecord, Entry } from '../src/storage';
+import { makeBackup, parseBackup, type AccountRecord, type Entry } from '../src/storage';
 
 const entry = (id: string, createdAt: string, over: Partial<Entry> = {}): Entry => ({
   id,
@@ -39,6 +39,17 @@ describe('entry ownership when saving', () => {
   it('does not treat another account’s cached record as ownership', () => {
     const sharedId = [entry('cloud', '2026-01-01T00:00:00.000Z')];
     expect(shouldSaveToAccount('cloud', sharedId, cached, 'account-2')).toBe(false);
+  });
+});
+
+describe('visible library backup', () => {
+  it('round-trips local and account entries while excluding tombstones', () => {
+    const local = [entry('local', '2026-01-01T00:00:00.000Z')];
+    const pending = entry('cloud', '2026-02-01T00:00:00.000Z', { notes: 'Unsent edit' });
+    const cached = [record(ACCOUNT, 'cloud', pending), record(ACCOUNT, 'deleted', null)];
+    const restored = parseBackup(makeBackup(mergeLibraryEntries(local, cached, ACCOUNT)));
+    expect(restored).toEqual(expect.arrayContaining([local[0], pending]));
+    expect(restored).toHaveLength(2);
   });
 });
 
