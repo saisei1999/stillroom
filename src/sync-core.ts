@@ -1,3 +1,4 @@
+import { parseProgress, type ProgressDetail } from './progress';
 /**
  * Pure account-sync domain logic for Stillroom.
  *
@@ -14,7 +15,7 @@
  */
 
 /** The canonical stillroom entry shape. Owned here; `storage.ts` re-exports it. */
-export type Entry = { id: string; title: string; type: string; status: string; color: string; progress: string; tags: string[]; rating?: number; notes: string; createdAt: string; productUrl?: string; price?: string; priority?: string; artworkUrl?: string; noteSections?: { id: string; title: string; body: string }[] };
+export type Entry = { id: string; title: string; type: string; status: string; color: string; progress: string; progressDetail?: ProgressDetail; tags: string[]; rating?: number; notes: string; createdAt: string; productUrl?: string; price?: string; priority?: string; artworkUrl?: string; noteSections?: { id: string; title: string; body: string }[] };
 
 /** The latest acknowledged-or-pending server view cached locally, scoped to one account. */
 export type AccountRecord = { accountId: string; entryId: string; entry: Entry | null; revision: number };
@@ -121,9 +122,11 @@ export function parseEntry(raw: unknown): Entry {
       optional[key] = value;
     }
   }
+  const progressDetail = raw.progressDetail === undefined ? undefined : parseProgress(raw.progressDetail);
+  if (raw.progressDetail !== undefined && !progressDetail) throw new SyncValidationError('rejected', 'Invalid progress details.');
   const noteSections = raw.noteSections;
   if (noteSections !== undefined && (!Array.isArray(noteSections) || noteSections.length > 500 || !noteSections.every(section => isRecord(section) && typeof section.id === 'string' && section.id.length > 0 && section.id.length <= 200 && typeof section.title === 'string' && section.title.length <= 120 && typeof section.body === 'string' && section.body.length <= 50000))) throw new SyncValidationError('rejected', 'Invalid note sections.');
-  return { id, title, type, status, color, progress, tags, notes, createdAt, ...(rawRating === undefined ? {} : { rating: rawRating }), ...optional, ...(noteSections === undefined ? {} : { noteSections: noteSections as Entry['noteSections'] }) };
+  return { id, title, type, status, color, progress, ...(progressDetail ? {progressDetail} : {}), tags, notes, createdAt, ...(rawRating === undefined ? {} : { rating: rawRating }), ...optional, ...(noteSections === undefined ? {} : { noteSections: noteSections as Entry['noteSections'] }) };
 }
 
 /**
@@ -497,3 +500,4 @@ export function pendingForConflict(conflict: { local: PendingChange; server: Ser
   if (parsed && parsed.id !== conflict.server.id) throw new SyncValidationError('rejected', 'The saved entry must keep the same id.');
   return { accountId: conflict.local.accountId, entryId: conflict.server.id, operationId: operationId(), expectedRevision: conflict.server.revision, entry: parsed, createdAt: conflict.local.createdAt };
 }
+

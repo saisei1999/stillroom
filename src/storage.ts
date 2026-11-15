@@ -1,3 +1,4 @@
+import { parseProgress } from './progress';
 /**
  * Local-first persistence for Stillroom.
  *
@@ -242,6 +243,8 @@ export function sanitizeEntry(value: unknown): Entry | undefined {
       optional[key] = raw[key];
     }
   }
+  const progressDetail = raw.progressDetail === undefined ? undefined : parseProgress(raw.progressDetail);
+  if (raw.progressDetail !== undefined && !progressDetail) return undefined;
   const noteSections = raw.noteSections;
   if (noteSections !== undefined && (!Array.isArray(noteSections) || noteSections.length > 500 || !noteSections.every(section => section && typeof section === 'object' && typeof section.id === 'string' && section.id.length > 0 && section.id.length <= 200 && typeof section.title === 'string' && section.title.length <= 120 && typeof section.body === 'string' && section.body.length <= 50000))) return undefined;
   return {
@@ -251,6 +254,7 @@ export function sanitizeEntry(value: unknown): Entry | undefined {
     status,
     color,
     progress,
+    ...(progressDetail ? {progressDetail} : {}),
     tags: [...new Set(tags as string[])],
     ...(rating === undefined ? {} : { rating }),
     notes,
@@ -662,3 +666,4 @@ export async function clearAccountCache(accountId: string): Promise<void> {
     transaction.onabort = () => reject(transaction.error ?? new Error('Clearing the cached account data was aborted.'));
   });
 }
+
