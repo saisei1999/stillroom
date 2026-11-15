@@ -6,13 +6,18 @@ On 2026-11-14 the hosted preflight and migration were run. The owner reported a
 passing corrected two-account authorization run. A browser preview with sync
 temporarily enabled pulled and edited entries across two separate localhost
 origins, including a same-entry conflict resolved with both versions preserved.
+The preview also propagated a test-entry deletion to the other origin and hid
+account A's cache after sign-out before displaying account B's entries. With a
+temporary transport failure injected into the preview, a new entry survived a
+reload and synced successfully after the failure was removed. This was a
+simulated transport outage, not a physical network-disconnection test.
 The authorization test's initial sample rows lacked payload IDs; six test-only
 rows were repaired in place. The audit's case-sensitive policy comparison was
 corrected for PostgreSQL's uppercase `NOT` rendering.
 
 The default build remains disabled. Still required: a real offline/reconnect
-browser test, deletion propagation, backup/restore and account-switch testing,
-and review of the remaining account identity race before enabling sync. The
+browser test, backup/restore testing, and review of the remaining account
+identity race before enabling sync. The
 browser preview currently needs a manual Sync now action; do not represent it as
 automatic synchronization.
 
