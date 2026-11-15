@@ -294,8 +294,8 @@ function clientFor(server: FakeSyncServer, accountId: string): TransportClient {
   };
 }
 
-function syncDevice(server: FakeSyncServer, accountId: string) {
-  return syncPending(clientFor(server, accountId), accountId);
+function syncDevice(server: FakeSyncServer, accountId: string, manual = false) {
+  return syncPending(clientFor(server, accountId), accountId, manual);
 }
 
 /** What this device's gallery would show for `accountId`. */
@@ -574,13 +574,13 @@ describe('two-device sync > retryable failures', () => {
     expect(titlesOf(await displayedLibrary(ACCOUNT))).toContain('Queued through a 5xx');
 
     // A second failed attempt increments the count again and still drops nothing.
-    const failedAgain = await syncDevice(server, ACCOUNT);
+    const failedAgain = await syncDevice(server, ACCOUNT, true);
     expect(failedAgain.retries).toBe(1);
     expect((await listPending(ACCOUNT))[0].retryCount).toBe(2);
 
     // Once the server recovers the same queued change applies exactly once.
     server.fault('apply_entry_change', null);
-    const succeeded = await syncDevice(server, ACCOUNT);
+    const succeeded = await syncDevice(server, ACCOUNT, true);
     expect(succeeded.pushed).toBe(1);
     expect(succeeded.retries).toBe(0);
     expect(await listPending(ACCOUNT)).toEqual([]);

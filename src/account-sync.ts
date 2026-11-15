@@ -240,7 +240,7 @@ export async function pushChange(client: TransportClient, accountId: string, cha
  * `SyncIdentityError` before anything is cached or sent for the wrong account.
  * Returns an honest report.
  */
-export async function syncPending(client: TransportClient, accountId: string): Promise<SyncReport> {
+export async function syncPending(client: TransportClient, accountId: string, manual = false): Promise<SyncReport> {
   const report: SyncReport = { pushed: 0, pulled: 0, conflictsDetected: 0, waiting: 0, retries: 0, lastError: null, errorKind: null, paused: false };
   const now = new Date().toISOString();
 
@@ -258,9 +258,9 @@ export async function syncPending(client: TransportClient, accountId: string): P
 
   const pending = await listPending(accountId);
   for (const change of pending) {
-    if (exceededAutomaticAttempts(change.retryCount)) {
+    if (!manual && (exceededAutomaticAttempts(change.retryCount) || change.nextAttemptAt > now)) {
       report.waiting += 1;
-      report.paused = true;
+      report.paused ||= exceededAutomaticAttempts(change.retryCount);
       continue;
     }
     if (conflicted.has(change.entryId)) continue;

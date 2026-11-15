@@ -12,6 +12,7 @@
 import {
   createAccountClient,
 } from './account-client';
+import { createClient } from '@supabase/supabase-js';
 import type { SupabaseClient, Session } from '@supabase/supabase-js';
 import {
   listAccountEntries,
@@ -47,6 +48,7 @@ import {
 import {
   syncPending as runSyncPending,
   currentSession,
+  SyncIdentityError,
   type SyncReport,
   type TransportClient,
 } from './account-sync';
@@ -127,10 +129,21 @@ export function readSessionState(): Promise<SyncUiState> {
 }
 
 /** The transport view of the Supabase client (matches `TransportClient`). */
-function transportOf(client: SupabaseClient): TransportClient {
+export function transportOf(client: SupabaseClient, accountId: string, tokenClient: (token: string) => Pick<SupabaseClient, 'rpc'> = (token) => createClient(PROJECT_URL, PUBLISHABLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  global: { headers: { Authorization: `Bearer ${token}` } },
+})): TransportClient {
   return {
-    rpc: (fn, args) =>
-      client.rpc(fn, args).then((result) => ({ data: (result as { data: unknown }).data ?? null, error: (result as { error: unknown }).error ?? null })) as Promise<{ data: null; error: unknown }>,
+    rpc: async <R>(fn: string, args: Record<string, unknown>) => {
+      // Pin each request to the token for the intended account. A session change
+      // after this point cannot make the request execute as a different user.
+      const { data, error } = await client.auth.getSession();
+      if (error) throw error;
+      const session = data.session;
+      if (!session || session.user.id !== accountId || !session.access_token) throw new SyncIdentityError();
+      const result = await tokenClient(session.access_token).rpc(fn, args);
+      return { data: ((result as { data: unknown }).data ?? null) as R | null, error: (result as { error: unknown }).error ?? null };
+    },
     // Read the live session, never the caller-supplied accountId: sync verifies
     // this still matches before every pull/push and after each await.
     currentUserId: () =>
@@ -154,9 +167,13 @@ export function notifyAccountDataChanged(): void {
   }
 }
 
-export function runSync(accountId: string): Promise<SyncReport> {
+const inFlightSync = new Map<string, Promise<SyncReport>>();
+
+export function runSync(accountId: string, manual = false): Promise<SyncReport> {
   if (!SYNC_ENABLED) return Promise.resolve({ pushed: 0, pulled: 0, conflictsDetected: 0, waiting: 0, retries: 0, lastError: null, errorKind: null, paused: false });
-  return runSyncPending(transportOf(buildClient()), accountId).then(
+  const existing = inFlightSync.get(accountId);
+  if (existing) return manual ? existing.catch(() => undefined).then(() => runSync(accountId, true)) : existing;
+  const work = runSyncPending(transportOf(buildClient(), accountId), accountId, manual).then(
     (report) => {
       // The cache may have gained rows or conflicts; let the view catch up.
       notifyAccountDataChanged();
@@ -167,7 +184,9 @@ export function runSync(accountId: string): Promise<SyncReport> {
       notifyAccountDataChanged();
       throw error;
     },
-  );
+  ).finally(() => { if (inFlightSync.get(accountId) === work) inFlightSync.delete(accountId); });
+  inFlightSync.set(accountId, work);
+  return work;
 }
 
 /** Whether a local edit should be routed through the account outbox. */

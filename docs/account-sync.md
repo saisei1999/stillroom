@@ -15,11 +15,15 @@ The authorization test's initial sample rows lacked payload IDs; six test-only
 rows were repaired in place. The audit's case-sensitive policy comparison was
 corrected for PostgreSQL's uppercase `NOT` rendering.
 
-The default build remains disabled. Still required: a real offline/reconnect
-browser test, backup/restore testing, and review of the remaining account
-identity race before enabling sync. The
-browser preview currently needs a manual Sync now action; do not represent it as
-automatic synchronization.
+Account requests now pin the authenticated account's access token; the live
+service accepted a pinned request and focused tests cover a session switch.
+The preview automatically syncs on sign-in, saves, reconnect and a 30-second
+poll, serializes passes per account, and applies retry backoff. A simulated
+outage was retried automatically after reopening the preview.
+
+The default build remains disabled. Still required: a physical network outage,
+backup/restore testing, deployment-origin verification, and independent review
+of the in-flight sign-out behavior before enabling sync.
 
 ## Product decisions
 Email/password sign-in with Supabase Auth; existing GitHub Pages static host remains. Entries stay locally available offline and are associated with one account only after an explicit migration choice. Never silently overwrite or upload a local library. Users can continue locally signed out. Supabase free projects can pause; communicate offline and retry state and retain pending writes. Browser storage remains vulnerable to eviction/clearing; JSON backup remains available.
@@ -86,9 +90,9 @@ Draft pull request: https://github.com/saisei1999/stillroom/pull/1
   when sync is enabled.)
 
 ### Still required before enabling
-1. Review the account identity race: `currentUserId` reads the locally stored session rather than server-verifying the token on every check; an already-sent request cannot be retracted.
+1. Independently review in-flight sign-out: requests are pinned to the intended account's token, but an already-sent request cannot be retracted after sign-out.
 2. Test a physical network disconnection and reconnection, account backup and restore, and the deployed Pages origin. The local tests and simulated transport outage do not replace these checks.
-3. Implement automatic synchronization and retry. The tested preview currently requires the user to press **Sync now**.
+3. Exercise automatic retry and conflict resolution under actual device and network interruptions.
 
 ### Fixed while verifying the SQL locally
 `supabase/verify/authorization.mjs` asserted that account B calling

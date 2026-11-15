@@ -16,6 +16,7 @@ import {
   summarizeSync,
   isWaiting,
   setActiveAccount,
+  subscribeActiveAccount,
   type ImportChoice,
 } from './sync-control';
 import { listEntries, listAccountEntries, type Entry } from './storage';
@@ -74,7 +75,7 @@ export function AccountPanel() {
       setReport({ summary: 'Your library stays on this device.', error: null, waiting: false });
       return;
     }
-    (async () => {
+    const refresh = async () => {
       const pending = await listPending(accountId);
       const conf = await listConflicts(accountId);
       if (!active) return;
@@ -82,9 +83,12 @@ export function AccountPanel() {
       setConflicts(conf);
       const summary = summarizeSync({ pushed: 0, pulled: 0, conflictsDetected: conf.length, waiting: pending.length, retries: 0, lastError: null, errorKind: null, paused: pending.length > 0 }, pending, conf);
       setReport({ summary, error: null, waiting: pending.length > 0 });
-    })();
+    };
+    void refresh();
+    const unsubscribe = subscribeActiveAccount(() => { void refresh(); });
     return () => {
       active = false;
+      unsubscribe();
     };
   }, [accountId]);
 
@@ -128,7 +132,7 @@ export function AccountPanel() {
     setBusy(true);
     setError('');
     try {
-      const newReport = await runSync(accountId);
+      const newReport = await runSync(accountId, true);
       const pending = await listPending(accountId);
       const conf = await listConflicts(accountId);
       const summary = summarizeSync(newReport, pending, conf);

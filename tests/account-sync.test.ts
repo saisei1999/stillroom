@@ -94,6 +94,31 @@ function identitySequence(values: Array<string | null>): () => Promise<string | 
   return async () => values[Math.min(index++, values.length - 1)] ?? null;
 }
 
+describe('retry scheduling', () => {
+  it('waits for backoff automatically but permits an explicit retry', async () => {
+    await queueAccountChange(accountRecord('acct', 'retry'), change('acct', 'retry', { nextAttemptAt: '2999-01-01T00:00:00.000Z' }));
+    let pushes = 0;
+    const client = fakeClient(async (fn) => {
+      if (fn === 'list_account_entries') return { data: [], error: null };
+      pushes++;
+      return { data: [{ outcome: 'applied', revision: 1, payload: entryOf('retry'), deleted: false, applied_revision: 1 }], error: null };
+    });
+    expect((await syncPending(client, 'acct')).waiting).toBe(1);
+    expect(pushes).toBe(0);
+    expect((await syncPending(client, 'acct', true)).pushed).toBe(1);
+    expect(await listPending('acct')).toHaveLength(0);
+  });
+
+  it('allows an explicit retry after the automatic attempt limit', async () => {
+    await queueAccountChange(accountRecord('acct', 'paused'), change('acct', 'paused', { retryCount: 99 }));
+    const client = fakeClient(async (fn) => fn === 'list_account_entries'
+      ? { data: [], error: null }
+      : { data: [{ outcome: 'applied', revision: 1, payload: entryOf('paused'), deleted: false, applied_revision: 1 }], error: null });
+    expect((await syncPending(client, 'acct')).paused).toBe(true);
+    expect((await syncPending(client, 'acct', true)).pushed).toBe(1);
+  });
+});
+
 describe('account sync transport > parsing and payloads', () => {
   it('rejects malformed server rows and does not trust them', () => {
     expect(() => parseServerRow(null)).toThrow();
