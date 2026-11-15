@@ -314,7 +314,7 @@ export function summarizeSync(report: SyncReport, pending: OutboxRecord[], confl
   void report;
   const pendingCount = pending.length;
   const conflictCount = conflicts.length;
-  if (pendingCount === 0 && conflictCount === 0) return 'Synced · nothing waiting';
+  if (pendingCount === 0 && conflictCount === 0) return 'No local changes waiting';
   if (conflictCount > 0) return `${conflictCount} ${conflictCount === 1 ? 'conflict needs' : 'conflicts need'} your review`;
   return `${pendingCount} ${pendingCount === 1 ? 'change' : 'changes'} waiting to sync`;
 }

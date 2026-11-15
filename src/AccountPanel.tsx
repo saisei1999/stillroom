@@ -20,7 +20,8 @@ import {
 } from './sync-control';
 import { listEntries, listAccountEntries, type Entry } from './storage';
 import { friendlySyncError, planImport } from './sync-core';
-const client = createAccountClient('https://hmrmcpsrzrhwquyxdfta.supabase.co', 'sb_publishable_FHbJZbLEkfdSI4ZDURFUjg_SjTTEbyB');
+export const accountClient = createAccountClient('https://hmrmcpsrzrhwquyxdfta.supabase.co', 'sb_publishable_FHbJZbLEkfdSI4ZDURFUjg_SjTTEbyB');
+const client = accountClient;
 
 export function AccountPanel() {
   const [session, setSession] = useState<Session | null>(null);
@@ -185,10 +186,16 @@ export function AccountPanel() {
 
   async function removeCache() {
     if (!accountId) return;
-    if (!confirm('Remove this account\u2019s synced data from this device? Pending changes that have not reached the account yet could be lost. Continue?')) return;
     setBusy(true);
     setError('');
     try {
+      const pending = await listPending(accountId);
+      const unresolved = await listConflicts(accountId);
+      if (pending.length || unresolved.length) {
+        setError('Sync pending changes and resolve conflicts before removing account data from this device.');
+        return;
+      }
+      if (!confirm('Remove this account\u2019s synced data from this device?')) return;
       await clearAccountCache(accountId);
       setPendingCount(0);
       setConflicts([]);
@@ -283,7 +290,9 @@ export function AccountPanel() {
                   return (
                     <li key={conf.entryId} className="conflict-item">
                       <strong>{view.localPreview}</strong>
+                      {conf.local?.entry && <span>Notes here: {conf.local.entry.notes || 'None'} · Status: {conf.local.entry.status} · Progress: {conf.local.entry.progress || 'None'}</span>}
                       <span>{view.serverPreview}</span>
+                      {conf.server.entry && <span>Notes in account: {conf.server.entry.notes || 'None'} · Status: {conf.server.entry.status} · Progress: {conf.server.entry.progress || 'None'}</span>}
                       <div className="conflict-actions">
                         <button type="button" onClick={async () => { await resolveConflictKeepMine(session.user.id, conf); await syncNow(); }}>Keep mine</button>
                         <button type="button" onClick={async () => { await resolveConflictUseTheirs(session.user.id, conf); await syncNow(); }}>Use theirs</button>
@@ -324,7 +333,7 @@ export function AccountPanel() {
       <h2>{mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create an account' : 'Reset password'}</h2>
       <p>Use your email to access your Stillroom account.</p>
       <p>For this early setup, confirmation emails can only be sent to an email address belonging to the Supabase project team.</p>
-      <p className="account-disclosure">Account sign-in is ready. Library syncing is coming next; signing in will not move or sync your existing entries.</p>
+      <p className="account-disclosure">{SYNC_ENABLED ? 'Signing in will not automatically upload your existing local entries. You can choose whether to import them.' : 'Account sign-in is ready. Library syncing is coming next; signing in will not move or sync your existing entries.'}</p>
       <form onSubmit={submit}>
         <label>
           Email

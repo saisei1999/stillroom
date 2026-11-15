@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeLibraryEntries } from '../src/library-view';
+import { mergeLibraryEntries, shouldSaveToAccount } from '../src/library-view';
 import type { AccountRecord, Entry } from '../src/storage';
 
 const entry = (id: string, createdAt: string, over: Partial<Entry> = {}): Entry => ({
@@ -24,6 +24,23 @@ const record = (accountId: string, entryId: string, cached: Entry | null, over: 
 });
 
 const ACCOUNT = 'account-1';
+
+describe('entry ownership when saving', () => {
+  const local = [entry('local', '2026-01-01T00:00:00.000Z')];
+  const cached = [record(ACCOUNT, 'cloud', entry('cloud', '2026-01-01T00:00:00.000Z'))];
+  it('keeps existing local entries local until imported', () => {
+    expect(shouldSaveToAccount('local', local, cached, ACCOUNT)).toBe(false);
+  });
+  it('queues new and account-owned entries only while signed in', () => {
+    expect(shouldSaveToAccount('new', local, cached, ACCOUNT)).toBe(true);
+    expect(shouldSaveToAccount('cloud', local, cached, ACCOUNT)).toBe(true);
+    expect(shouldSaveToAccount('cloud', local, cached, null)).toBe(false);
+  });
+  it('does not treat another account’s cached record as ownership', () => {
+    const sharedId = [entry('cloud', '2026-01-01T00:00:00.000Z')];
+    expect(shouldSaveToAccount('cloud', sharedId, cached, 'account-2')).toBe(false);
+  });
+});
 
 describe('library view > mergeLibraryEntries', () => {
   it('returns local entries unchanged when there is no active account', () => {

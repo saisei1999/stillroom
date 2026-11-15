@@ -191,7 +191,7 @@ with policy_state as (
              and permissive = 'PERMISSIVE'
              and qual like '%owner_id%'
              and qual like '%auth.uid()%'
-             and qual like '%not deleted%'
+             and qual ilike '%not deleted%'
          ) as owner_live_selects
     from pg_policies
    where schemaname = 'public' and tablename = 'account_entries'

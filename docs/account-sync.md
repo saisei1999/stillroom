@@ -1,5 +1,21 @@
 # Account sync implementation plan (not yet enabled)
 
+## Live verification update
+
+On 2026-11-14 the hosted preflight and migration were run. The owner reported a
+passing corrected two-account authorization run. A browser preview with sync
+temporarily enabled pulled and edited entries across two separate localhost
+origins, including a same-entry conflict resolved with both versions preserved.
+The authorization test's initial sample rows lacked payload IDs; six test-only
+rows were repaired in place. The audit's case-sensitive policy comparison was
+corrected for PostgreSQL's uppercase `NOT` rendering.
+
+The default build remains disabled. Still required: a real offline/reconnect
+browser test, deletion propagation, backup/restore and account-switch testing,
+and review of the remaining account identity race before enabling sync. The
+browser preview currently needs a manual Sync now action; do not represent it as
+automatic synchronization.
+
 ## Product decisions
 Email/password sign-in with Supabase Auth; existing GitHub Pages static host remains. Entries stay locally available offline and are associated with one account only after an explicit migration choice. Never silently overwrite or upload a local library. Users can continue locally signed out. Supabase free projects can pause; communicate offline and retry state and retain pending writes. Browser storage remains vulnerable to eviction/clearing; JSON backup remains available.
 

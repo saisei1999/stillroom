@@ -68,7 +68,7 @@ async function apply(client, { entryId, operationId = newId(), expectedRevision,
     p_id: entryId,
     p_operation_id: operationId,
     p_expected_revision: expectedRevision,
-    p_payload: payload ?? {},
+    p_payload: { ...(payload ?? {}), id: entryId },
     p_deleted: deleted,
   });
   const rows = Array.isArray(res.data) ? res.data : res.data ? [res.data] : [];
@@ -154,7 +154,7 @@ async function main() {
     const beforeRow = Array.isArray(before.data) ? before.data[0] : undefined;
     const res = await b.rpc(RPCS.apply, {
       p_id: entryId, p_operation_id: newId(), p_expected_revision: 0,
-      p_payload: samplePayload('B overwrite attempt'), p_deleted: false,
+      p_payload: { ...samplePayload('B overwrite attempt'), id: entryId }, p_deleted: false,
     });
     const after = await a.select(TABLES.entries, and(eq('id', entryId), 'select=revision,payload'));
     const afterRow = Array.isArray(after.data) ? after.data[0] : undefined;
@@ -185,14 +185,20 @@ async function main() {
     record('B: cannot delete A row via REST', !res.ok || count === 0, `${res.status} ${describe(res)}`);
   });
 
-  await check('B: cannot overwrite A row via RPC with a valid expected revision', async () => {
+  await check('B: same-id update only changes B row', async () => {
     const res = await b.rpc(RPCS.apply, {
       p_id: entryId, p_operation_id: newId(), p_expected_revision: 1,
-      p_payload: samplePayload('B revision guess'), p_deleted: false,
+      p_payload: { ...samplePayload('B revision guess'), id: entryId }, p_deleted: false,
     });
     const row = Array.isArray(res.data) ? res.data[0] : undefined;
-    record('B: cannot overwrite A row via RPC with a valid expected revision',
-      !res.ok || row?.outcome === 'conflict', `${res.status} outcome=${row?.outcome ?? describe(res)}`);
+    const own = await b.select(TABLES.entries, and(eq('id', entryId), 'select=revision,payload'));
+    const original = await a.select(TABLES.entries, and(eq('id', entryId), 'select=revision,payload'));
+    record('B: same-id update only changes B row',
+      res.ok && row?.outcome === 'applied' && own.data?.length === 1
+        && own.data[0].payload?.notes === 'B revision guess'
+        && original.data?.length === 1 && original.data[0].revision === 1
+        && original.data[0].payload?.notes === payload1.notes,
+      `${res.status} outcome=${row?.outcome ?? describe(res)} A.revision=${original.data?.[0]?.revision}`);
   });
 
   await check('A row still owned by A after all B attempts', async () => {
@@ -214,18 +220,20 @@ async function main() {
       `${appliedUpdate.res.status} outcome=${appliedUpdate.row?.outcome} revision=${appliedUpdate.row?.revision}`);
   });
 
-  await check('B: cannot select updated A row', async () => {
-    const res = await b.select(TABLES.entries, and(eq('id', entryId), 'select=id'));
-    const count = Array.isArray(res.data) ? res.data.length : -1;
-    record('B: cannot select updated A row', res.ok && count === 0, `${res.status} rows=${count}`);
+  await check('B: select returns only B same-id row', async () => {
+    const res = await b.select(TABLES.entries, and(eq('id', entryId), 'select=id,payload'));
+    const rows = Array.isArray(res.data) ? res.data : [];
+    record('B: select returns only B same-id row', res.ok && rows.length === 1
+      && rows[0].payload?.notes === 'B revision guess', `${res.status} rows=${rows.length}`);
   });
 
   await check('B: list_account_entries cannot see A row', async () => {
     const res = await b.rpc(RPCS.list, { p_after_seq: null, p_limit: 500 });
     const rows = Array.isArray(res.data) ? res.data : [];
-    const leaked = rows.some((r) => r.id === entryId);
-    record('B: list_account_entries cannot see A row', res.ok && !leaked,
-      `${res.status} rows=${rows.length} leaked=${leaked}`);
+    const matching = rows.filter((r) => r.id === entryId);
+    const isolated = matching.length === 1 && matching[0].payload?.notes === 'B revision guess';
+    record('B: list_account_entries cannot see A row', res.ok && isolated,
+      `${res.status} matching rows=${matching.length} isolated=${isolated}`);
   });
 
   // --- 4. Revision conflict returns the server row -------------------------
@@ -342,13 +350,15 @@ async function main() {
       `outcome=${res.row?.outcome} A-sees=${hidden.data?.length}`);
   });
 
-  // Runs before the resurrect step so revision 6 is still a genuinely valid
-  // number: a "conflict" here can only come from ownership, not from staleness.
+  // A has revision 6; B's independent same-id row has revision 2.
   await check('B: cannot overwrite A row with a currently valid revision', async () => {
-    const res = await apply(b, { entryId, expectedRevision: 5, payload: samplePayload('B hijack') });
+    const res = await apply(b, { entryId, expectedRevision: 6, payload: samplePayload('B hijack') });
     const row = res.row;
+    const aCurrent = await a.select(TABLES.entries, and(eq('id', entryId), 'select=revision,payload'));
     record('B: cannot overwrite A row with a currently valid revision',
-      !res.res.ok || row?.outcome === 'conflict', `${res.res.status} outcome=${row?.outcome ?? describe(res)}`);
+      res.res.ok && row?.outcome === 'conflict' && aCurrent.data?.length === 1
+        && Number(aCurrent.data[0].revision) === 6 && aCurrent.data[0].payload?.notes === 'resurrected by A',
+      `${res.res.status} outcome=${row?.outcome ?? describe(res.res)} A.revision=${aCurrent.data?.[0]?.revision}`);
   });
 
   // --- 8. Input validation -------------------------------------------------

@@ -47,7 +47,7 @@ afterEach(() => closeDatabase());
 
 describe('sync control > summary', () => {
   it('is honest and never over-claims', () => {
-    expect(summarizeSync({ pushed: 0, pulled: 0, conflictsDetected: 0, waiting: 0, retries: 0, lastError: null, errorKind: null, paused: false }, [], [])).toContain('Synced');
+    expect(summarizeSync({ pushed: 0, pulled: 0, conflictsDetected: 0, waiting: 0, retries: 0, lastError: null, errorKind: null, paused: false }, [], [])).toBe('No local changes waiting');
     expect(summarizeSync({ pushed: 0, pulled: 0, conflictsDetected: 0, waiting: 2, retries: 0, lastError: null, errorKind: null, paused: false }, [{}, {}] as never, [])).toContain('changes waiting');
     expect(summarizeSync({ pushed: 0, pulled: 0, conflictsDetected: 0, waiting: 0, retries: 0, lastError: null, errorKind: null, paused: false }, [], [{}] as never)).toContain('conflict');
   });
