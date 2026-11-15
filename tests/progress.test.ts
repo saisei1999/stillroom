@@ -9,6 +9,8 @@ describe('media progress',()=>{
  it('keeps legacy entries readable and labels shows without changing their stored type',()=>{expect(sanitizeEntry(base)).toEqual(base);expect(formatProgress(base)).toBe('Episode 3');expect(typeLabel(base.type)).toBe('TV Show');});
  it('round-trips multiple seasons without losing their independent completion marks',()=>{const detail={kind:'episodes' as const,total:2,completed:[1],seasons:[{id:'s1',name:'Season 1',total:2,completed:[1]},{id:'s2',name:'Season 2',total:3,completed:[2,3]}]};const e={...base,progressDetail:detail};expect(sanitizeEntry(e)).toEqual(e);expect(parseEntry(e)).toEqual(e);expect(formatProgress(e)).toBe('3 / 5 episodes');});
  it('rejects invalid seasons and preserves legacy single-season data',()=>{expect(parseProgress({kind:'episodes',total:2,completed:[2]})).toEqual({kind:'episodes',total:2,completed:[2]});expect(parseProgress({kind:'episodes',total:2,completed:[1],seasons:[{id:'s1',name:'Season 1',total:2,completed:[2]}]})).toBeUndefined();expect(parseProgress({kind:'episodes',total:2,completed:[1],seasons:[{id:'s1',name:'Season 1',total:2,completed:[1]},{id:'s1',name:'Season 2',total:1,completed:[]}]})).toBeUndefined();});
+ it('accepts movie positions of two hours and retains them in backups and sync',()=>{const e={...base,type:'Movie',progressDetail:{kind:'movie' as const,digits:'0200'}};expect(sanitizeEntry(e)).toEqual(e);expect(parseEntry(e)).toEqual(e);expect(formatProgress(e)).toBe('02:00');});
+ it('retains radar entries in backups and sync',()=>{const e={...base,status:'On my radar'};expect(sanitizeEntry(e)).toEqual(e);expect(parseEntry(e)).toEqual(e);});
 });
 
 

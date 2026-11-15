@@ -211,7 +211,7 @@ export function makeBackup(entries: Entry[]) {
 }
 
 const TYPES = new Set(['Game', 'Movie', 'TV / Anime', 'Manga', 'Book', 'Music', 'Product']);
-const STATUSES = new Set(['Planned', 'In progress', 'Completed', 'Paused', 'Dropped', 'Purchased', 'Using']);
+const STATUSES = new Set(['On my radar', 'Planned', 'In progress', 'Completed', 'Paused', 'Dropped', 'Purchased', 'Using']);
 const COLORS = new Set(['blue', 'ochre', 'rose', 'slate', 'violet', 'teal']);
 
 /** Rebuilds a trusted Entry from untrusted data, or returns undefined. Shared with sync validation. */
