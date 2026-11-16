@@ -50,6 +50,5 @@ export function PlatformOverlay({ entry }: {entry:Entry; onOpen:()=>void}) {
   }, [identity, entry.title, entry.type, entry.availabilityMatch, country, lookupAccount, nearby]);
   return <div ref={anchor} className="platform-overlay" aria-label="Platforms" onPointerDown={event=>event.stopPropagation()} onClick={event=>event.stopPropagation()}>
     {links.slice(0,6).map(link=><a key={providerKey(link.name)} href={link.titleUrl} target="_blank" rel="noopener noreferrer" aria-label={`Open ${entry.title} on ${link.name}`} title={`Open ${link.name}`}><PlatformIcon name={link.name}/></a>)}
-    {links.length>0 && <a className="platform-credit" href={entry.type==='Game'?'https://www.igdb.com/':'https://www.watchmode.com/'} target="_blank" rel="noopener noreferrer" aria-label={entry.type==='Game'?'Game links by IGDB':'Streaming links by Watchmode'}>{entry.type==='Game'?'IGDB':'Watchmode'}</a>}
   </div>;
 }
