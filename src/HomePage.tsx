@@ -28,6 +28,17 @@ function thumbStyle(entry: Entry): CSSProperties | undefined {
     : undefined;
 }
 
+type RecentNoteCard = { entry: Entry; note: { id: string; title: string; body: string } };
+
+/** First readable line of a note, with block markers stripped. */
+export function noteExcerpt(body: string, limit = 140): string {
+  const line = body
+    .split('\n')
+    .map(text => text.replace(/^(#{1,3}\s+|[-*]\s+\[[ x]\]\s+|[-*]\s+|>\s+|\d+\.\s+)/i, '').trim())
+    .find(Boolean) ?? '';
+  return line.length > limit ? `${line.slice(0, limit - 1).trimEnd()}…` : line;
+}
+
 export function HomePage({ entries, history, displayName, loaded, onAdd, onOpenLibrary, onOpenNotes, onOpenFocus, onOpenEntry, onOpenNote }: HomeProps) {
   const now = new Date();
   const counts = {
@@ -35,14 +46,17 @@ export function HomePage({ entries, history, displayName, loaded, onAdd, onOpenL
     active: entries.filter(entry => entry.status === 'In progress' || entry.status === 'Using').length,
     done: entries.filter(entry => entry.status === 'Completed').length,
   };
-  const recent: { entry: Entry; note: { id: string; title: string } }[] = [];
+  const recent: RecentNoteCard[] = [];
   for (const item of history) {
     if (recent.length === 3) break;
     const entry = entries.find(candidate => candidate.id === item.entryId);
-    const note = entry?.noteSections?.find(section => section.id === item.noteId);
-    if (entry && note) recent.push({ entry, note });
+    if (!entry) continue;
+    const note = item.noteId === 'general'
+      ? { id: 'general', title: 'General notes', body: entry.notes }
+      : entry.noteSections?.find(section => section.id === item.noteId);
+    if (note) recent.push({ entry, note });
   }
-  const latest = entries.slice(0, 4);
+  const latest = entries.slice(0, 5);
   const name = displayName.trim();
   const named = name && name !== 'Your profile';
 
@@ -66,27 +80,32 @@ export function HomePage({ entries, history, displayName, loaded, onAdd, onOpenL
       <div><dt>Finished</dt><dd>{loaded ? counts.done : '—'}</dd></div>
     </dl>
 
-    <div className="home-columns">
-      <section className="home-block" aria-labelledby="home-continue">
-        <div className="home-block-heading"><h2 id="home-continue">Jump back in</h2></div>
-        {recent.length > 0
-          ? <ul className="home-list">{recent.map(({ entry, note }) =>
-              <li key={entry.id + note.id}><button type="button" onClick={() => onOpenNote(entry, note.id)}><span className={`home-dot ${entry.color}`} aria-hidden="true"/><span><strong>{note.title || 'Untitled note'}</strong><small>{entry.title}</small></span></button></li>
-            )}</ul>
-          : <p className="home-empty">Nothing opened recently. Notes you read will gather here.</p>}
-      </section>
+    <section className="home-row" aria-labelledby="home-continue">
+      <div className="home-row-heading"><h2 id="home-continue">Jump back in</h2><button type="button" onClick={onOpenNotes}>All notes</button></div>
+      {recent.length > 0
+        ? <ul className="note-row">{recent.map(({ entry, note }) =>
+            <li key={entry.id + note.id}><button type="button" className={`note-home ${entry.color}`} onClick={() => onOpenNote(entry, note.id)}>
+              <span className="note-home-wash" aria-hidden="true"/>
+              <span className="note-home-type">{entry.type}</span>
+              <strong>{note.title || 'Untitled note'}</strong>
+              {noteExcerpt(note.body) && <span className="note-home-excerpt">{noteExcerpt(note.body)}</span>}
+              <span className="note-home-foot">{entry.title}</span>
+            </button></li>
+          )}</ul>
+        : <p className="home-empty">Nothing opened recently. Notes you read will gather here.</p>}
+    </section>
 
-      <section className="home-block" aria-labelledby="home-latest">
-        <div className="home-block-heading"><h2 id="home-latest">Recently added</h2><button type="button" onClick={onOpenLibrary}>View all</button></div>
-        {latest.length > 0
-          ? <ul className="home-latest">{latest.map(entry =>
-              <li key={entry.id}><button type="button" onClick={() => onOpenEntry(entry)}>
-                <span className={`home-thumb ${entry.color}`} style={thumbStyle(entry)} aria-hidden="true">{!entry.artworkUrl && entry.title.slice(0, 1).toUpperCase()}</span>
-                <span><strong>{entry.title}</strong><small>{entry.type} · {entry.status}</small></span>
-              </button></li>
-            )}</ul>
-          : <p className="home-empty">{loaded ? 'Your library is quiet. Add the first thing you want to keep.' : 'Opening your library…'}</p>}
-      </section>
-    </div>
+    <section className="home-row" aria-labelledby="home-latest">
+      <div className="home-row-heading"><h2 id="home-latest">Recently added</h2><button type="button" onClick={onOpenLibrary}>View all</button></div>
+      {latest.length > 0
+        ? <ul className="entry-row">{latest.map(entry =>
+            <li key={entry.id}><button type="button" className="entry-home" onClick={() => onOpenEntry(entry)}>
+              <span className={`entry-home-cover ${entry.color}`} style={thumbStyle(entry)} aria-hidden="true">{!entry.artworkUrl && entry.title.slice(0, 1).toUpperCase()}</span>
+              <strong>{entry.title}</strong>
+              <small>{entry.type} · {entry.status}</small>
+            </button></li>
+          )}</ul>
+        : <p className="home-empty">{loaded ? 'Your library is quiet. Add the first thing you want to keep.' : 'Opening your library…'}</p>}
+    </section>
   </section>;
 }
