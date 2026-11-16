@@ -37,7 +37,7 @@ describe('Watchmode source candidates', () => {
     expect(watchmodeCandidates([show], 'US')).toEqual([{sourceId:1, name:'Crunchyroll', region:'US', offerType:'sub', titleUrl:show.web_url, verified:true}]);
     expect(watchmodeCandidates([show], 'GB')).toEqual([]);
     expect(watchmodeCandidates([{...show, name:'Crunchyroll Premium'}], 'US')).toHaveLength(1);
-    for (const web_url of ['https://www.crunchyroll.com/search?q=attack', 'https://www.crunchyroll.com/watch/GR751KNZY/attack', 'https://crunchyroll.com.evil.example/series/GR751KNZY/attack', 'https://www.crunchyroll.com/series/GR751KNZY']) {
+    for (const web_url of ['https://www.crunchyroll.com/search?q=attack', 'https://www.crunchyroll.com/watch/GR751KNZY/attack', 'https://crunchyroll.com.evil.example/series/GR751KNZY/attack', 'https://www.crunchyroll.com/series/SHORT']) {
       expect(watchmodeCandidates([{...show, web_url}], 'US')).toEqual([]);
     }
   });

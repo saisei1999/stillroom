@@ -30,6 +30,13 @@ describe('Watchmode client contract', () => {
     await expect(requestWatchmode('Example','movie','US','9993')).rejects.toThrow();
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+  it('does not cache a partial response when identity lookup can be retried', async () => {
+    const fetcher = vi.fn(async () => Response.json({source:'Watchmode', mediaType:'tv', externalId:'9001', region:'US', candidates:[], retryable:true}));
+    vi.stubGlobal('fetch', fetcher);
+    await requestWatchmode('Example','tv','US','9001');
+    await requestWatchmode('Example','tv','US','9001');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
   it('does not use cached results or call the server after sign-out', async () => {
     vi.spyOn(accountClient.auth, 'getSession').mockResolvedValue({data:{session:null},error:null});
     const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);

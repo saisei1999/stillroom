@@ -13,7 +13,7 @@ const key = 'sb_publishable_FHbJZbLEkfdSI4ZDURFUjg_SjTTEbyB';
 const regionKey = 'stillroom-availability-region';
 export type Link = { name: string; url: string; kind: string; logo?: string };
 type Data = { matches?: AvailabilityMatch[]; links?: Link[]; source?: string; availabilityPage?: string; matchedTitle?: string };
-type WatchmodeData = { source: 'Watchmode'; mediaType: string; externalId: string; region: string; candidates: WatchmodeCandidate[] };
+type WatchmodeData = { source: 'Watchmode'; mediaType: string; externalId: string; region: string; candidates: WatchmodeCandidate[]; retryable?: boolean };
 const inFlight = new Map<string,Promise<Data>>();
 export function region(): string { try { const value = localStorage.getItem(regionKey); return value && /^[A-Z]{2}$/.test(value) ? value : 'US'; } catch { return 'US'; } }
 export function mediaType(type: string) { return type === 'Movie' ? 'movie' : type === 'TV / Anime' ? 'tv' : type === 'Game' ? 'game' : undefined; }
@@ -49,8 +49,7 @@ export async function requestWatchmode(title: string, type: string, country: str
   const pending = watchmodePending.get(cacheKey);
   if (pending) return pending;
   const operation = fetchWatchmode(title, type, country, id, session?.access_token).then(value => {
-    if (watchmodeCache.size >= 100) watchmodeCache.delete(watchmodeCache.keys().next().value!);
-    watchmodeCache.set(cacheKey, { at: Date.now(), value });
+    if (!value.retryable) { if (watchmodeCache.size >= 100) watchmodeCache.delete(watchmodeCache.keys().next().value!); watchmodeCache.set(cacheKey, { at: Date.now(), value }); }
     return value;
   });
   watchmodePending.set(cacheKey, operation);
@@ -67,7 +66,7 @@ async function fetchWatchmode(title: string, type: string, country: string, id: 
   if (data.source !== 'Watchmode' || data.mediaType !== type || data.externalId !== id || data.region !== country || !Array.isArray(data.candidates)) throw new Error('Invalid response');
   // Revalidate data crossing the network boundary. The adapter expects upstream field names.
   const candidates = watchmodeCandidates(data.candidates.map((value: any) => ({ source_id: value?.sourceId, name: value?.name, region: value?.region, type: value?.offerType, web_url: value?.titleUrl })), country);
-  return { source: 'Watchmode', mediaType: type, externalId: id, region: country, candidates };
+  return { source: 'Watchmode', mediaType: type, externalId: id, region: country, candidates, ...(data.retryable === true ? {retryable:true} : {}) };
 }
 export function useLookupAccount(): string | null {
   const [account, setAccount] = useState<string | null>(usingFixture ? 'fixture' : null);

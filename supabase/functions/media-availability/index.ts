@@ -1,4 +1,5 @@
 import { watchmodeCandidates } from './watchmode.ts';
+import { crunchyrollSeriesFallback } from './wikidata.ts';
 // The browser never receives provider credentials. This function exposes only
 // title lookup and store metadata, not an arbitrary upstream proxy.
 declare const Deno: { env: { get(name: string): string | undefined }; serve(handler: (request: Request) => Promise<Response>): void };
@@ -49,7 +50,7 @@ async function signedInUser(request: Request): Promise<string | undefined> {
   return typeof user?.id === 'string' && user.id && user.is_anonymous !== true ? authorization.slice(7) : undefined;
 }
 class WatchmodeBudgetExhausted extends Error {}
-type WatchmodeResult = { candidates: ReturnType<typeof watchmodeCandidates>; source: 'Watchmode'; mediaType: string; externalId: string; region: string };
+type WatchmodeResult = { candidates: ReturnType<typeof watchmodeCandidates>; source: 'Watchmode'; mediaType: string; externalId: string; region: string; retryable?: boolean };
 const watchmodeCache = new Map<string, { at: number; value: WatchmodeResult }>();
 const watchmodePending = new Map<string, Promise<WatchmodeResult>>();
 async function lookupWatchmode(type: string, id: string, region: string, token: string): Promise<WatchmodeResult> {
@@ -67,9 +68,10 @@ async function lookupWatchmode(type: string, id: string, region: string, token: 
     url.searchParams.set('regions', region);
     const data = await json(url.href, { headers: { 'X-API-Key': key } });
     if (!Array.isArray(data)) throw new Error('invalid provider response');
-    const value: WatchmodeResult = { candidates: watchmodeCandidates(data, region), source: 'Watchmode', mediaType: type, externalId: id, region };
-    if (watchmodeCache.size >= 100) watchmodeCache.delete(watchmodeCache.keys().next().value!);
-    watchmodeCache.set(cacheKey, { at: Date.now(), value });
+    const candidates = watchmodeCandidates(data, region);
+    const fallback = type === 'tv' && !candidates.some(item => /^crunchyroll(?: premium)?$/i.test(item.name.trim())) ? await crunchyrollSeriesFallback(data, region, id) : {candidates: [], retryable: false};
+    const value: WatchmodeResult = { candidates: [...candidates, ...fallback.candidates], source: 'Watchmode', mediaType: type, externalId: id, region, ...(fallback.retryable ? {retryable:true} : {}) };
+    if (!fallback.retryable) { if (watchmodeCache.size >= 100) watchmodeCache.delete(watchmodeCache.keys().next().value!); watchmodeCache.set(cacheKey, { at: Date.now(), value }); }
     return value;
   })();
   watchmodePending.set(cacheKey, operation);

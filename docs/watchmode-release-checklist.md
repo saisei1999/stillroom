@@ -12,6 +12,8 @@ The quota guard and Edge Function are deployed. Watchmode is trusted as the titl
 
 ## Credit and security limits
 
+When Watchmode reports a Crunchyroll episode rather than a series page, the optional identity fallback sends the confirmed TMDB television ID to Wikidata. It requires a single matching Wikidata item with the same TMDB ID and a single Crunchyroll series ID; ambiguous or failed lookups do not create an icon. Watchmode remains the source of regional availability. A Wikidata match does not guarantee that its information or Watchmode's availability is current.
+
 The proposed database guard reserves two credits for each TMDB-ID source request and permits up to 500 reservations globally and 50 per account in a rolling 31-day window. It cannot account for credits used by other clients or work already performed on the same Watchmode key. Requests are charged against the guard even if the upstream fails. Watchmode lookups require a server-verified signed-in user and the guard is callable only by authenticated users. Per-account limits reduce individual exhaustion but do not stop someone from creating multiple accounts; monitoring and account-creation controls are still needed before broad access. Browser and function-instance memory each cache successful results for six hours and coalesce simultaneous identical requests. This is not a shared cache across function instances and resets on restart. The free plan is non-commercial, needs attribution, and supports only enabled account regions. Verify the account's actual remaining quota and allowed regions before use.
 
 ## Deployment checklist and remaining checks
