@@ -9,7 +9,9 @@ export type ProviderTarget = { url:string; mode:'direct'|'search' };
 export function providerKey(value:string):string {
     const n = value.trim().toLowerCase();
     if (n.startsWith('netflix')) return 'netflix';
-    if (n === 'amazon prime video' || n === 'prime video' || n === 'amazon video') return 'prime video';
+    if (n === 'tubi' || n === 'tubi tv') return 'tubi';
+    if (n === 'amazon' || n === 'amazon prime video' || n === 'prime video' || n === 'amazon video') return 'prime video';
+    if (n === 'crunchyroll premium') return 'crunchyroll';
     return n;
 }
 // The current upstream does not provide verified provider title destinations.
