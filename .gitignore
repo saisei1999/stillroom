@@ -5,3 +5,5 @@ dist/
 coverage/
 *.tsbuildinfo
 .agent/
+# Local API benchmark output may contain provider links and is not source code.
+scripts/watchmode-benchmark-results.json

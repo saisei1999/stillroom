@@ -1,4 +1,6 @@
+import { isValidRating } from './rating';
 import { parseProgress, type ProgressDetail } from './progress';
+import { parseChosenMatch, parsePersonalLinks, type ChosenMatch, type PersonalLink } from './availability';
 /**
  * Pure account-sync domain logic for Stillroom.
  *
@@ -15,7 +17,7 @@ import { parseProgress, type ProgressDetail } from './progress';
  */
 
 /** The canonical stillroom entry shape. Owned here; `storage.ts` re-exports it. */
-export type Entry = { id: string; title: string; type: string; status: string; color: string; progress: string; progressDetail?: ProgressDetail; tags: string[]; rating?: number; notes: string; createdAt: string; productUrl?: string; price?: string; priority?: string; artworkUrl?: string; noteSections?: { id: string; title: string; body: string }[] };
+export type Entry = { id: string; title: string; type: string; status: string; color: string; progress: string; progressDetail?: ProgressDetail; tags: string[]; rating?: number; notes: string; createdAt: string; productUrl?: string; price?: string; priority?: string; artworkUrl?: string; artworkPosition?: number; personalLinks?: PersonalLink[]; availabilityMatch?: ChosenMatch; noteSections?: { id: string; title: string; body: string }[] };
 
 /** The latest acknowledged-or-pending server view cached locally, scoped to one account. */
 export type AccountRecord = { accountId: string; entryId: string; entry: Entry | null; revision: number };
@@ -112,8 +114,8 @@ export function parseEntry(raw: unknown): Entry {
   if (!Array.isArray(rawTags) || !rawTags.every((tag) => typeof tag === 'string')) throw new SyncValidationError('rejected', 'Entry tags are not a list of labels.');
   const tags: string[] = [];
   for (const tag of rawTags) tags.push(tag);
-  const rawRating = raw.rating;
-  if (rawRating !== undefined && (typeof rawRating !== 'number' || !Number.isInteger(rawRating) || rawRating < 1 || rawRating > 5)) throw new SyncValidationError('rejected', 'Entry rating must be a whole number from 1 to 5.');
+  const rawRating = raw.rating == null ? undefined : raw.rating;
+  if (rawRating !== undefined && !isValidRating(rawRating)) throw new SyncValidationError('rejected', 'Entry rating must be between 1.0 and 5.0 in 0.1 increments.');
   const optional: Pick<Entry, 'productUrl' | 'price' | 'priority' | 'artworkUrl'> = {};
   for (const key of ['productUrl', 'price', 'priority', 'artworkUrl'] as const) {
     const value = raw[key];
@@ -122,11 +124,17 @@ export function parseEntry(raw: unknown): Entry {
       optional[key] = value;
     }
   }
+  const artworkPosition = raw.artworkPosition;
+  if (artworkPosition !== undefined && (typeof artworkPosition !== 'number' || !Number.isInteger(artworkPosition) || artworkPosition < 0 || artworkPosition > 100)) throw new SyncValidationError('rejected', 'Invalid artwork position.');
   const progressDetail = raw.progressDetail === undefined ? undefined : parseProgress(raw.progressDetail);
   if (raw.progressDetail !== undefined && !progressDetail) throw new SyncValidationError('rejected', 'Invalid progress details.');
   const noteSections = raw.noteSections;
+  const personalLinks = raw.personalLinks === undefined ? undefined : parsePersonalLinks(raw.personalLinks);
+  if (raw.personalLinks !== undefined && !personalLinks) throw new SyncValidationError('rejected', 'Invalid personal links.');
+  const availabilityMatch = raw.availabilityMatch === undefined ? undefined : parseChosenMatch(raw.availabilityMatch);
+  if (raw.availabilityMatch !== undefined && !availabilityMatch) throw new SyncValidationError('rejected', 'Invalid availability match.');
   if (noteSections !== undefined && (!Array.isArray(noteSections) || noteSections.length > 500 || !noteSections.every(section => isRecord(section) && typeof section.id === 'string' && section.id.length > 0 && section.id.length <= 200 && typeof section.title === 'string' && section.title.length <= 120 && typeof section.body === 'string' && section.body.length <= 50000))) throw new SyncValidationError('rejected', 'Invalid note sections.');
-  return { id, title, type, status, color, progress, ...(progressDetail ? {progressDetail} : {}), tags, notes, createdAt, ...(rawRating === undefined ? {} : { rating: rawRating }), ...optional, ...(noteSections === undefined ? {} : { noteSections: noteSections as Entry['noteSections'] }) };
+  return { id, title, type, status, color, progress, ...(progressDetail ? {progressDetail} : {}), tags, notes, createdAt, ...(artworkPosition === undefined ? {} : { artworkPosition }), ...(rawRating === undefined ? {} : { rating: rawRating }), ...optional, ...(personalLinks ? {personalLinks} : {}), ...(availabilityMatch ? {availabilityMatch} : {}), ...(noteSections === undefined ? {} : { noteSections: noteSections as Entry['noteSections'] }) };
 }
 
 /**
@@ -500,4 +508,3 @@ export function pendingForConflict(conflict: { local: PendingChange; server: Ser
   if (parsed && parsed.id !== conflict.server.id) throw new SyncValidationError('rejected', 'The saved entry must keep the same id.');
   return { accountId: conflict.local.accountId, entryId: conflict.server.id, operationId: operationId(), expectedRevision: conflict.server.revision, entry: parsed, createdAt: conflict.local.createdAt };
 }
-

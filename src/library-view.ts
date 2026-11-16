@@ -12,8 +12,8 @@
 import type { AccountRecord, Entry } from './storage';
 
 /** Existing local-only items remain local; new and account-owned items use the active account. */
-export function shouldSaveToAccount(entryId: string, local: Entry[], records: AccountRecord[], accountId: string | null): boolean {
-  if (!accountId) return false;
+export function shouldSaveToAccount(entryId: string, local: Entry[], records: AccountRecord[], accountId: string | null, syncEnabled: boolean): boolean {
+  if (!syncEnabled || !accountId) return false;
   return records.some(record => record.accountId === accountId && record.entryId === entryId)
     || !local.some(entry => entry.id === entryId);
 }

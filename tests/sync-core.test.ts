@@ -137,7 +137,7 @@ describe('parseServerEntry (untrusted network input)', () => {
 
   it('accepts an entry without a rating but rejects an out-of-range rating', () => {
     expect(parseServerEntry({ id: 'one', revision: 1, entry: book }, 'one').entry?.rating).toBeUndefined();
-    for (const rating of [0, 6, 4.5, -1, Number.NaN]) {
+    for (const rating of [0, 6, 4.55, -1, Number.NaN]) {
       expectValidationFailure(() => parseServerEntry({ id: 'rated', revision: 1, entry: { ...rated, rating } }, 'rated'));
     }
   });

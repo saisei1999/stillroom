@@ -1,0 +1,23 @@
+# Watchmode integration: local release checklist
+
+This is a local candidate. It has not been deployed. Watchmode is trusted as the title-to-link source only after a confirmed TMDB ID, requested region, supported provider domain, and title-page route are checked. This does not independently prove the provider page is correct or current. Netflix and Apple TV are the only supported Watchmode provider routes currently. Unconfirmed matches, missing links, unsupported providers, and failed lookups produce no provider icon. Watchmode attribution must be visible where its links appear.
+
+## Credit and security limits
+
+The proposed database guard reserves two credits for each TMDB-ID source request and permits up to 500 reservations globally and 50 per account in a rolling 31-day window. It cannot account for credits used by other clients or work already performed on the same Watchmode key. Requests are charged against the guard even if the upstream fails. Watchmode lookups require a server-verified signed-in user and the guard is callable only by authenticated users. Per-account limits reduce individual exhaustion but do not stop someone from creating multiple accounts; monitoring and account-creation controls are still needed before broad access. Browser and function-instance memory each cache successful results for six hours and coalesce simultaneous identical requests. This is not a shared cache across function instances and resets on restart. The free plan is non-commercial, needs attribution, and supports only enabled account regions. Verify the account's actual remaining quota and allowed regions before use.
+
+## Before any deployment
+
+1. Review the full local diff, the function source, and `supabase/watchmode-budget.sql`. Confirm the target project and that the proposed table and function names do not already exist or belong to another feature. Establish an independently restorable database backup and a reviewed rollback plan.
+2. Review and test the deployment and rollback sequence with an isolated environment first. Apply no production migration or function update without explicit approval. The secret is stored in Supabase, but its value has not been tested there.
+3. Confirm the existing production function can be restored from a saved, verified copy. The database rollback removes only Watchmode budget state; it is safe only after disabling or reverting the new function path. Do not apply the rollback to unrelated objects.
+4. Test the deployed function with a small bounded set including Suits (2011), same-name remakes, both Dune films, a region not enabled on the plan, missing URLs, upstream errors, and quota exhaustion. Check attribution, no search URLs, and exact destinations. A successful response is not proof of identity for every title.
+5. Separately verify UI behavior on desktop, keyboard, and mobile, and ensure entries, notes, Focus, backups and optional account sync survive. Deployment of the frontend is a separate decision; pushes to main publish GitHub Pages.
+
+## Compatibility and rollout gates
+
+- Backups now use format version 2 so the published client rejects them rather than silently dropping new fields; the new client continues to read version 1. The published client accepts only whole-number ratings in backup/sync validation. It cannot reliably import or sync a new decimal-rated record. Do not enable account sync or roll back to an older frontend after new-format data exists until a compatible, fail-closed client-version strategy has been designed and verified. Preserve an untouched JSON export and the IndexedDB database; use a forward-compatible fix rather than rounding, dropping fields, or replacing data. Test stale tabs and older devices before enabling optional sync.
+- The new optional artwork position and provider match must survive backups, conflict copies, and account sync; old clients may omit unfamiliar fields. A mixed-version sync safety plan remains required.
+- Existing Supabase sign-in is used only for provider links while `SYNC_ENABLED` remains false. Confirm sign-in, sign-out, token expiration and local-entry creation with two real test accounts before release. General account signup depends on the project's email settings and must not be assumed to work.
+- The function-instance cache is not shared across Edge instances, and per-account budgets do not prevent multiple-account abuse. Confirm account-creation controls and monitor the shared quota.
+- Source selection during add is implemented for movies, TV and games; manual entry remains available when search is unavailable. Netflix/Apple TV and Steam are the only currently supported direct-link routes. Other provider icons remain hidden.

@@ -378,6 +378,23 @@ describe('two-device sync > create and pull', () => {
   });
 });
 
+describe('two-device sync > media identity preservation', () => {
+  it('preserves a decimal rating, provider match, links, notes and progress when another device pulls', async () => {
+    const server = new FakeSyncServer();
+    const deviceA = newDeviceFactory(), deviceB = newDeviceFactory();
+    const entry: Entry = { ...entryOf('media1', 'Suits'), type:'TV / Anime', progress:'Season 1', rating:4.2, artworkPosition:37, notes:'A note to preserve',
+      personalLinks:[{id:'own-link',label:'Netflix',url:'https://www.netflix.com/title/70283145'}],
+      availabilityMatch:{id:'37680',title:'Suits',year:2011,query:'Suits',mediaType:'tv'},
+      noteSections:[{id:'note1',title:'Thoughts',body:'Keep this'}] };
+    activateDevice(deviceA);
+    await queueAccountSave(ACCOUNT, entry, 0);
+    expect((await syncDevice(server, ACCOUNT)).pushed).toBe(1);
+    activateDevice(deviceB);
+    expect((await syncDevice(server, ACCOUNT)).pulled).toBe(1);
+    expect((await displayedLibrary(ACCOUNT)).find(item=>item.id==='media1')).toMatchObject(entry);
+  });
+});
+
 describe('two-device sync > offline edit and reload', () => {
   it('B keeps an offline edit through a reload and syncs it once the server answers again', async () => {
     const server = new FakeSyncServer();

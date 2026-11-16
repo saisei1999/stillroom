@@ -29,16 +29,20 @@ describe('entry ownership when saving', () => {
   const local = [entry('local', '2026-01-01T00:00:00.000Z')];
   const cached = [record(ACCOUNT, 'cloud', entry('cloud', '2026-01-01T00:00:00.000Z'))];
   it('keeps existing local entries local until imported', () => {
-    expect(shouldSaveToAccount('local', local, cached, ACCOUNT)).toBe(false);
+    expect(shouldSaveToAccount('local', local, cached, ACCOUNT, true)).toBe(false);
   });
   it('queues new and account-owned entries only while signed in', () => {
-    expect(shouldSaveToAccount('new', local, cached, ACCOUNT)).toBe(true);
-    expect(shouldSaveToAccount('cloud', local, cached, ACCOUNT)).toBe(true);
-    expect(shouldSaveToAccount('cloud', local, cached, null)).toBe(false);
+    expect(shouldSaveToAccount('new', local, cached, ACCOUNT, true)).toBe(true);
+    expect(shouldSaveToAccount('cloud', local, cached, ACCOUNT, true)).toBe(true);
+    expect(shouldSaveToAccount('cloud', local, cached, null, true)).toBe(false);
+  });
+  it('keeps new entries local when signed in for links but sync is disabled', () => {
+    expect(shouldSaveToAccount('new', local, cached, ACCOUNT, false)).toBe(false);
+    expect(shouldSaveToAccount('cloud', local, cached, ACCOUNT, false)).toBe(false);
   });
   it('does not treat another account’s cached record as ownership', () => {
     const sharedId = [entry('cloud', '2026-01-01T00:00:00.000Z')];
-    expect(shouldSaveToAccount('cloud', sharedId, cached, 'account-2')).toBe(false);
+    expect(shouldSaveToAccount('cloud', sharedId, cached, 'account-2', true)).toBe(false);
   });
 });
 

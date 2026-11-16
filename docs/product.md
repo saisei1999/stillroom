@@ -1,20 +1,17 @@
 # Product brief
 
 ## Promise
-A calm, personal home for games, movies, TV/anime, manga, books and music. Search once, choose a cover, save, and update progress in a tap. The library belongs to the user, works without an account and is exportable.
+Stillroom is a local-first personal home for games, movies, TV/anime, manga, books and music. The library remains usable without an account; a signed-in account is required for platform-link lookups. Account sync is optional and currently disabled in the release candidate.
 
-## V1 outcomes
-- Add manually or find a title via a supported source; choose among available artwork or upload a cover. Editing and manual fallback always work offline.
-- Browse a gallery; search locally, filter by medium and status, and sort by title or updated date.
-- Planned, in progress, completed, paused and dropped; optional 0–5 rating (half steps), notes/review, tags and progress with optional total/unit. One-tap increment never silently exceeds a known total.
-- Continue shelf, planned media, simple user collections, and quiet counts. Physical-product wishlists belong in a separate app. Editable title and metadata remain user-controlled.
-- Versioned complete JSON backup/restore including uploaded image bytes, plus readable Markdown files and image assets for future Obsidian use. Markdown is a one-way export in v1, not live sync.
+## Core experience
+- Add media manually or select a specific provider result; keep manual entry available when search fails.
+- Browse, search, filter and organize a cover-forward library. Track status, progress, notes, tags and an optional rating from 1.0 to 5.0 in 0.1 increments; unrated is distinct from zero.
+- Focus contains explicitly focused entries; Notes and existing saved views remain independent navigation tools.
+- Show a platform icon only for a supported direct title destination associated with the confirmed media identity. No search or generic provider links as icons. Watchmode is trusted for its title-to-link match after region, domain and route validation; its data may still be stale or wrong.
+- Export and restore a versioned JSON backup. Remote artwork is referenced, not bundled; individual Markdown export and richer asset portability remain future work.
 
-## Acceptance
-An offline user can add, edit, increment and reload an item; errors are visible and never presented as successful saves. A JSON backup restores all user content and uploaded media in a clean browser profile after validation; Markdown export retains notes and points to included assets. Search failures and missing artwork have graceful manual fallbacks. Keyboard and narrow-screen core flows are usable.
+## Boundaries
+Wishlist is a separate future domain, not a wholesale merge of the old prototype. Social feeds, recommendations, native apps, live Obsidian sync and a generic schema builder are out of scope for this milestone. Do not invent metadata or totals.
 
-## Out of scope
-Accounts, social feeds, recommendations, ranking algorithms, automatic cross-device sync, native apps, automatic vault sync, and a full Notion-style formula database. No invented totals or metadata.
-
-## Profile direction
-A local personal profile should eventually present a chronological activity timeline (such as progress, reviews, and milestones). A contribution-style activity visualization is a later goal. This is a personal history, not a commitment to accounts, public feeds, or social sharing. Scope its persistence, privacy and backup format before implementation.
+## Release checks
+Validate local data, backups, Notes, Focus and optional sync; test keyboard, touch, narrow screens and reduced motion. Confirm provider rights, attribution and region behavior. Deployment and account-sync activation require separate approval; see `watchmode-release-checklist.md`.

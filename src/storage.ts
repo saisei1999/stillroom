@@ -1,4 +1,6 @@
+import { isValidRating } from './rating';
 import { parseProgress } from './progress';
+import { parseChosenMatch, parsePersonalLinks } from './availability';
 /**
  * Local-first persistence for Stillroom.
  *
@@ -207,7 +209,7 @@ export const putEntry = (entry: Entry) => transaction<IDBValidKey>('readwrite', 
 export const deleteEntry = (id: string) => transaction<undefined>('readwrite', (store) => store.delete(id));
 
 export function makeBackup(entries: Entry[]) {
-  return JSON.stringify({ format: 'stillroom', version: 1, exportedAt: new Date().toISOString(), entries }, null, 2);
+  return JSON.stringify({ format: 'stillroom', version: 2, exportedAt: new Date().toISOString(), entries }, null, 2);
 }
 
 const TYPES = new Set(['Game', 'Movie', 'TV / Anime', 'Manga', 'Book', 'Music', 'Product']);
@@ -234,8 +236,8 @@ export function sanitizeEntry(value: unknown): Entry | undefined {
   if (!TYPES.has(type) || !STATUSES.has(status) || !COLORS.has(color)) return undefined;
   const tags = raw.tags;
   if (!Array.isArray(tags) || tags.length > 100 || !tags.every((tag) => typeof tag === 'string' && tag.length > 0 && tag.length <= 60)) return undefined;
-  const rating = raw.rating;
-  if (rating !== undefined && (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5)) return undefined;
+  const rating = raw.rating == null ? undefined : raw.rating;
+  if (rating !== undefined && !isValidRating(rating)) return undefined;
   const optional: Pick<Entry, 'productUrl' | 'price' | 'priority' | 'artworkUrl'> = {};
   for (const key of ['productUrl', 'price', 'priority', 'artworkUrl'] as const) {
     if (raw[key] !== undefined) {
@@ -243,9 +245,15 @@ export function sanitizeEntry(value: unknown): Entry | undefined {
       optional[key] = raw[key];
     }
   }
+  const artworkPosition = raw.artworkPosition;
+  if (artworkPosition !== undefined && (typeof artworkPosition !== 'number' || !Number.isInteger(artworkPosition) || artworkPosition < 0 || artworkPosition > 100)) return undefined;
   const progressDetail = raw.progressDetail === undefined ? undefined : parseProgress(raw.progressDetail);
   if (raw.progressDetail !== undefined && !progressDetail) return undefined;
   const noteSections = raw.noteSections;
+  const personalLinks = raw.personalLinks === undefined ? undefined : parsePersonalLinks(raw.personalLinks);
+  if (raw.personalLinks !== undefined && !personalLinks) return undefined;
+  const availabilityMatch = raw.availabilityMatch === undefined ? undefined : parseChosenMatch(raw.availabilityMatch);
+  if (raw.availabilityMatch !== undefined && !availabilityMatch) return undefined;
   if (noteSections !== undefined && (!Array.isArray(noteSections) || noteSections.length > 500 || !noteSections.every(section => section && typeof section === 'object' && typeof section.id === 'string' && section.id.length > 0 && section.id.length <= 200 && typeof section.title === 'string' && section.title.length <= 120 && typeof section.body === 'string' && section.body.length <= 50000))) return undefined;
   return {
     id,
@@ -257,7 +265,10 @@ export function sanitizeEntry(value: unknown): Entry | undefined {
     ...(progressDetail ? {progressDetail} : {}),
     tags: [...new Set(tags as string[])],
     ...(rating === undefined ? {} : { rating }),
+    ...(artworkPosition === undefined ? {} : { artworkPosition }),
     notes,
+    ...(personalLinks ? {personalLinks} : {}),
+    ...(availabilityMatch ? {availabilityMatch} : {}),
     ...(noteSections === undefined ? {} : { noteSections: noteSections.map((section: {id:string;title:string;body:string}) => ({id:section.id,title:section.title,body:section.body})) }),
     createdAt,
     ...optional,
@@ -268,7 +279,7 @@ export function parseBackup(text: string): Entry[] {
   const raw: unknown = JSON.parse(text);
   if (!raw || typeof raw !== 'object') throw new Error('Invalid backup');
   const data = raw as Record<string, unknown>;
-  if (data.format !== 'stillroom' || data.version !== 1 || !Array.isArray(data.entries) || data.entries.length > 10000) throw new Error('Unsupported backup');
+  if (data.format !== 'stillroom' || ![1, 2].includes(data.version as number) || !Array.isArray(data.entries) || data.entries.length > 10000) throw new Error('Unsupported backup');
   const ids = new Set<string>();
   const entries: Entry[] = [];
   for (const value of data.entries) {
@@ -666,4 +677,3 @@ export async function clearAccountCache(accountId: string): Promise<void> {
     transaction.onabort = () => reject(transaction.error ?? new Error('Clearing the cached account data was aborted.'));
   });
 }
-

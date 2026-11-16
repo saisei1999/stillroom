@@ -1,0 +1,2 @@
+[functions.media-availability]
+verify_jwt = false

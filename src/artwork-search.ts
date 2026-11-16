@@ -1,4 +1,5 @@
-export type Artwork = { url: string; title: string; source: string };
+import type { ChosenMatch } from './availability';
+export type Artwork = { url: string; title: string; source: string; providerMatch?: ChosenMatch };
 type Provider = 'itunes' | 'tvmaze' | 'openlibrary' | 'wikipedia';
 const words = (text: string) => text.toLocaleLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().split(/\s+/).filter(word => word && !['the', 'a', 'an', 'of'].includes(word));
 export function relevance(query: string, title: string): number {
