@@ -1,6 +1,6 @@
 # Stillroom: instructions for coding agents
 
-Stillroom is a personal, local-first media library. Preserve the existing library, Notes, Focus, saved views, progress, ratings, artwork and unrelated changes. Read the relevant code and documentation before changing behavior; `docs/watchmode-release-checklist.md`, `docs/availability.md`, and `docs/platform-links-handoff.md` contain integration and recovery context, but verify dated claims against the current implementation.
+Stillroom is a personal, local-first media library. Preserve the existing library, Notes, Focus, saved views, progress, ratings, artwork and unrelated changes. Read the relevant code and documentation before changing behavior; `docs/watchmode-release-checklist.md`, `docs/availability.md`, and `docs/platform-links-handoff.md` contain integration and recovery context, but verify dated claims against the current implementation. For the current state of uncommitted work, the entry page, panes and autosave, read `docs/handoff-2026-11-16.md` first.
 
 ## Safety and release
 
