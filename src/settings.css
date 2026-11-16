@@ -1,0 +1,38 @@
+/* Settings has its own navigation, while retaining Stillroom's visual language. */
+.sidebar.settings-sidebar, .is-collapsed .sidebar.settings-sidebar {
+  flex-basis: 230px;
+  padding: 22px 14px;
+}
+.settings-navigation { display: flex; flex-direction: column; gap: 0; }
+.settings-back { min-height: 44px; padding: 0 10px; border: 0; background: transparent; color: #557685; text-align: left; font-size: 12px; }
+.settings-navigation h2 { margin: 21px 10px 13px; color: #355967; font-size: 19px; letter-spacing: -.4px; }
+.settings-nav-items { display: flex; flex-direction: column; gap: 3px; }
+.settings-nav-items button { min-height: 44px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: #506f7b; font-size: 13px; text-align: left; }
+.settings-nav-items button:hover { background: #d2e2e6; }
+.settings-nav-items button[aria-current=page] { background: #c6dbe1; color: #284d5e; font-weight: 700; }
+.settings-mobile-nav { display: none; }
+.settings-content { max-width: 760px; margin: 68px auto 0; }
+.settings-eyebrow { margin: 0 0 12px; color: #7896a1; font-size: 10px; font-weight: 700; letter-spacing: 1.1px; }
+.settings-content h1 { font-size: 28px; }
+.settings-intro { margin: 8px 0 0; color: #718a93; font-size: 13px; line-height: 1.55; }
+.settings-content .appearance-card, .settings-content .account-panel, .settings-content .placeholder-card { max-width: none; margin-top: 26px; border-radius: 13px; }
+.settings-content .appearance-icon { display: none; }
+.settings-content .appearance-card input { max-width: 100%; }
+.settings-content .account-panel form { max-width: 420px; }
+.settings-content .placeholder-card p { line-height: 1.6; }
+:root[data-theme=dark] .settings-navigation h2 { color: #d6e3e8; }
+:root[data-theme=dark] .settings-back, :root[data-theme=dark] .settings-nav-items button { color: #adc8d2; }
+:root[data-theme=dark] .settings-nav-items button:hover { background: #253e4a; }
+:root[data-theme=dark] .settings-nav-items button[aria-current=page] { background: #304c59; color: #eef8fa; }
+:root[data-theme=dark] .settings-intro { color: #a8c0c8; }
+@media(max-width:700px) {
+  .settings-mobile-nav { display: block; margin: 17px -18px 0; padding: 0 18px 12px; border-bottom: 1px solid #dfe8e8; }
+  .settings-mobile-nav .settings-back { padding-left: 0; }
+  .settings-mobile-nav .settings-navigation h2 { margin: 8px 0 8px; font-size: 20px; }
+  .settings-mobile-nav .settings-nav-items { flex-direction: row; overflow-x: auto; gap: 5px; padding-bottom: 4px; }
+  .settings-mobile-nav .settings-nav-items button { flex: 0 0 auto; padding: 0 12px; white-space: nowrap; }
+  .settings-content { margin: 28px 0 0; }
+  .settings-content h1 { font-size: 25px; }
+  .settings-content .appearance-card, .settings-content .account-panel, .settings-content .placeholder-card { margin-top: 20px; padding: 19px; }
+  :root[data-theme=dark] .settings-mobile-nav { border-color: #2a3d46; }
+}

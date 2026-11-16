@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" aria-labelledby="title">
+  <title id="title">Stillroom app icon</title>
+  <rect width="256" height="256" rx="56" fill="#15242D"/>
+  <path d="M199 115 150 66Q128 44 106 66L57 115Q35 128 57 150L106 199Q128 221 150 199L199 150" stroke="#88C6E7" stroke-width="13" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M128 103C132 119 137 124 153 128C137 132 132 137 128 153C124 137 119 132 103 128C119 124 124 119 128 103Z" fill="#88C6E7"/>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 110" role="img" aria-labelledby="title">
+  <title id="title">Stillroom logo on light surface</title>
+  <rect width="440" height="110" rx="16" fill="#F7F9F6"/>
+  <g transform="translate(18 15) scale(.8)" fill="none">
+    <path d="M85 42 62 19Q50 7 38 19L15 42Q7 50 15 58L38 81Q50 93 62 81L85 58" stroke="#15242D" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M50 39C51.5 45.5 54.5 48.5 61 50C54.5 51.5 51.5 54.5 50 61C48.5 54.5 45.5 51.5 39 50C45.5 48.5 48.5 45.5 50 39Z" fill="#15242D"/>
+  </g>
+  <text x="109" y="72" fill="#15242D" font-family="Inter, Avenir Next, Arial, sans-serif" font-size="50" font-weight="650" letter-spacing="-2.2">stillroom</text>
+</svg>

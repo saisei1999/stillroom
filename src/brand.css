@@ -1,0 +1,29 @@
+/* Stillpoint Geometric v0.1 — brand marks and wordmark. */
+:root {
+  --stillroom-navy: #15242D;
+  --stillroom-icy: #88C6E7;
+  --stillroom-near-white: #F7F9F6;
+}
+
+.brand-mark { display: block; flex: none; }
+.sidebar-symbol { display: flex; align-items: center; color: var(--stillroom-navy); }
+.mobile-brand-home .mobile-brand-mark { display: inline-flex; align-items: center; margin-right: 0; color: var(--stillroom-navy); }
+.sidebar-top .nav-heading { color: var(--stillroom-navy); font-weight: 700; letter-spacing: -.55px; text-transform: lowercase; }
+
+:root[data-theme=dark] .sidebar-symbol,
+:root[data-theme=dark] .mobile-brand-home .mobile-brand-mark { color: var(--stillroom-icy); }
+:root[data-theme=dark] .sidebar-top .nav-heading { color: var(--stillroom-near-white); }
+
+/* The mark and wordmark act as the home link; the collapse control stays separate. */
+.brand-home { display: flex; align-items: center; gap: 11px; min-width: 0; min-height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: inherit; text-align: left; }
+.brand-home:hover .sidebar-symbol, .brand-home:hover .nav-heading { opacity: .72; }
+.brand-home:focus-visible { outline-offset: 2px; }
+.is-collapsed .sidebar .brand-home { display: none; }
+
+/* The lockup typesets the wordmark in the app's own typeface. */
+.mobile-brand-home { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0; border: 0; background: none; color: var(--stillroom-navy); font: inherit; font-size: 15px; font-weight: 700; letter-spacing: -.35px; }
+:root[data-theme=dark] .mobile-brand-home { color: var(--stillroom-near-white); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .sidebar-symbol .brand-mark { transition: opacity .18s ease; }
+}

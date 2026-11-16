@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" aria-labelledby="title">
+  <title id="title">Stillroom Geometric Stillpoint</title>
+  <path d="M85 42 62 19Q50 7 38 19L15 42Q7 50 15 58L38 81Q50 93 62 81L85 58" stroke="#88C6E7" stroke-width="7" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M50 39C51.5 45.5 54.5 48.5 61 50C54.5 51.5 51.5 54.5 50 61C48.5 54.5 45.5 51.5 39 50C45.5 48.5 48.5 45.5 50 39Z" fill="#88C6E7"/>
+</svg>
