@@ -63,6 +63,13 @@ describe('availability service', () => {
     const budget = fetchMock.mock.calls.find(entry => String(entry[0]).includes('stillroom_take_watchmode_budget'));
     expect((budget?.[1]?.headers as Record<string,string>).Authorization).toBe('Bearer user-token');
   });
+  it('rejects an expired or invalid session even when the title is cached', async () => {
+    const query = 'type=tv&title=Cached&id=88777&region=US&source=watchmode';
+    expect((await get(query)).status).toBe(200);
+    const calls = fetchMock.mock.calls.filter(call => String(call[0]).includes('api.watchmode.com')).length;
+    expect((await get(query, 'https://saisei1999.github.io', 'expired-token')).status).toBe(401);
+    expect(fetchMock.mock.calls.filter(call => String(call[0]).includes('api.watchmode.com'))).toHaveLength(calls);
+  });
   it('fails safely for unsupported regions or malformed Watchmode requests', async () => {
     expect((await get('type=tv&title=Suits&source=watchmode')).status).toBe(400);
     watchmodeFails = true;
