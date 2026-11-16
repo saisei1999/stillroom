@@ -68,4 +68,11 @@ describe('side panes', () => {
     expect(html).toContain('--pane-peek:0px');
   });
 
+  it('gives both entry and note panes explicit, distinguishable close controls', () => {
+    const html = render();
+    expect(html).toContain('aria-label="Close entry pane: Silksong"');
+    expect(html).toContain('aria-label="Close note pane: Act II"');
+    expect(html.match(/class="pane-close side-pane-close"/g)).toHaveLength(2);
+  });
+
 });

@@ -94,7 +94,7 @@ function NotePaneEditor({ entry, noteId, onSave, onDirty, registerSave }: { entr
 
 /**
  * Side panes stack like sheets of paper: the front pane is fully visible and the
- * ones behind it peek out to the left, each shifted by the same amount.
+ * ones behind it peek out to the right, each shifted by the same amount.
  */
 export function SidePanes({ panes, entries, front, onFront, onClose, onSave, onDelete, onDirty, dirtyKeys }: Props) {
   const saveHandlers = useRef(new Map<string, () => Promise<boolean>>());
@@ -176,7 +176,7 @@ export function SidePanes({ panes, entries, front, onFront, onClose, onSave, onD
           <span>{pane.kind === 'note' ? 'NOTE' : 'ENTRY'}</span>
           <div className="side-pane-tools">
             {depth > 0 && <span className="side-pane-depth">{depth} behind</span>}
-            <button type="button" className="pane-close" aria-label={`Close ${entry?.title ?? 'pane'}`} onClick={() => { void closePane(pane); }}>×</button>
+            <button type="button" className="pane-close side-pane-close" aria-label={`Close ${pane.kind} pane: ${paneTitle(pane)}`} title={`Close ${paneTitle(pane)}`} onClick={() => { void closePane(pane); }}>×</button>
           </div>
         </div>
       </aside>;

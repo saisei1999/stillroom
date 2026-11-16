@@ -730,3 +730,57 @@
 .pane-stack.has-tabs .side-pane { top: 46px; }
 .note-autosave-status { display: block; margin-top: 20px; color: #5b7684; font-size: 11px; }
 :root[data-theme=dark] .note-autosave-status { color: #9cb9c7; }
+
+/* A pane always has a visible exit, including over bright or dark artwork. */
+.side-pane > .side-pane-top .side-pane-close {
+ display: grid;
+ place-items: center;
+ width: 44px;
+ height: 44px;
+ padding: 0;
+ border: 1px solid #a8c1cd;
+ border-radius: 999px;
+ background: #f7fbfd;
+ color: #294b5e;
+ box-shadow: 0 3px 12px #10232f26;
+ font-size: 25px;
+ line-height: 1;
+ cursor: pointer;
+}
+.side-pane > .side-pane-top .side-pane-close:hover { background: #e1edf3; border-color: #688fa3; }
+.side-pane > .side-pane-top .side-pane-close:focus-visible { outline: 2px solid #487e99; outline-offset: 3px; }
+:root[data-theme=dark] .side-pane > .side-pane-top .side-pane-close { background: #10232f; color: #f0f8fc; border-color: #6b8c9e; }
+:root[data-theme=dark] .side-pane > .side-pane-top .side-pane-close:hover { background: #294a5c; }
+:root[data-theme=dark] .side-pane > .side-pane-top .side-pane-close:focus-visible { outline-color: #b5e1f3; }
+/* Compact entry panes scroll as one document instead of pinning Notes below a gap. */
+.side-pane { --side-surface: #fbfcfb; --side-card: #f0f5f7; --side-ink: #294b5e; --side-muted: #526f7d; --side-border: #c5d7df; }
+:root[data-theme=dark] .side-pane { --side-surface: #18232b; --side-card: #22343d; --side-ink: #e1eef4; --side-muted: #aec6d2; --side-border: #456270; }
+.side-pane > .entry-pane > form { display: block; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.side-pane > .entry-pane .pane-content { padding: 0 24px; overflow: visible; }
+.side-pane .entry-art-hero { height: 200px; margin: 0 -24px 20px; isolation: isolate; background: var(--side-card); }
+.side-pane .entry-art-hero.is-empty { height: 64px; background: none; }
+.side-pane .hero-blur { position: absolute; inset: -24px; background-size: cover; background-position: center; filter: blur(22px); opacity: .3; }
+.side-pane .entry-art-hero img { position: relative; z-index: 1; object-fit: contain; opacity: .9; }
+.side-pane .entry-art-hero::after { z-index: 2; background: linear-gradient(180deg, transparent 55%, var(--side-surface)); }
+.side-pane .pane-title-row { align-items: center; margin-bottom: 18px; }
+.side-pane .pane-title textarea { color: var(--side-ink); }
+.side-pane .pane-title-row .focus-star { width: 44px; height: 44px; }
+.side-pane .pane-caption { display: none; }
+.side-pane .entry-context { margin-top: 0; }
+.side-pane .entry-pane :is(.tracking-pill,.tracking-select select) { color: var(--side-ink); background: var(--side-card); border-color: var(--side-border); }
+.side-pane .tracking-select { color: var(--side-ink); }
+.side-pane .entry-control-panel { position: static; width: 100%; margin-top: 12px; padding: 16px; background: var(--side-surface); color: var(--side-ink); border-color: var(--side-border); }
+.side-pane .entry-control-panel .pane-properties { gap: 12px; border: 0; padding: 0; }
+.side-pane .entry-control-panel .pane-properties label { grid-template-columns: minmax(0,1fr); gap: 6px; color: var(--side-muted); }
+.side-pane .entry-control-panel :is(input,select) { min-height: 44px; color: var(--side-ink); background: var(--side-card); border-color: var(--side-border); }
+.side-pane .entry-control-panel :is(header button,.clear-rating) { color: var(--side-ink); border-color: var(--side-border); }
+.side-pane .notes-menu { margin: 24px; padding: 20px; border: 1px solid var(--side-border); border-radius: 16px; background: var(--side-surface); color: var(--side-ink); }
+.side-pane .notes-heading { flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.side-pane .notes-heading h2 { margin: 0; color: var(--side-ink); font-size: 18px; font-weight: 600; }
+.side-pane .notes-heading button { min-height: 44px; color: var(--side-ink); background: var(--side-card); border-color: var(--side-border); }
+.side-pane .notes-gallery { grid-template-columns: repeat(auto-fill,minmax(min(100%,180px),1fr)); gap: 12px; max-height: none; overflow: visible; margin: 0; padding: 0; }
+.side-pane .note-card { min-height: 144px; padding: 16px; color: var(--side-ink); background: var(--side-card); border-color: var(--side-border); }
+.side-pane .note-card span { color: var(--side-muted); }
+.side-pane .note-card small { display: flex; align-items: center; gap: 8px; margin-top: auto; color: var(--side-muted); font-size: 11px; }
+.side-pane .note-card small svg { width: 16px; height: 16px; }
+.side-pane .note-card:focus-visible { outline: 2px solid #7fa9bc; outline-offset: 3px; }
