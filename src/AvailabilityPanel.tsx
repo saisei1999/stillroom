@@ -83,7 +83,7 @@ function kindForWatchmode(type: string, preferred: ChosenMatch | undefined, titl
   const kind = mediaType(type);
   return (kind === 'movie' || kind === 'tv') && confirmedMatch(preferred, title, kind) ? preferred : undefined;
 }
-export function AvailabilityPanel({ title, type, links, onLinks, preferred, onPreferred }: {title:string; type:string; links:PersonalLink[]; onLinks:(links:PersonalLink[])=>void; preferred?:ChosenMatch; onPreferred:(match:ChosenMatch)=>void}) {
+export function AvailabilityPanel({ title, type, links, onLinks, preferred, onPreferred, showNames = false, manageRequest = 0 }: {title:string; type:string; links:PersonalLink[]; onLinks:(links:PersonalLink[])=>void; preferred?:ChosenMatch; onPreferred:(match:ChosenMatch)=>void; showNames?:boolean;manageRequest?:number}) {
   const lookupAccount = useLookupAccount();
   const [country, setCountry] = useState(region), [matches, setMatches] = useState<AvailabilityMatch[]>([]), [selected, setSelected] = useState<AvailabilityMatch | null>(null);
   const [data, setData] = useState<Data | null>(null), [state, setState] = useState<'loading'|'ready'|'error'>('loading');
@@ -105,6 +105,7 @@ export function AvailabilityPanel({ title, type, links, onLinks, preferred, onPr
     return () => { current = false; };
   }, [title, type, country, preferred, lookupAccount, selected?.id]);
   const [retry, setRetry] = useState(0), [detailsOpen,setDetailsOpen] = useState(false), kind = mediaType(type);
+  useEffect(()=>{if(manageRequest)setDetailsOpen(true)},[manageRequest]);
   useEffect(() => {
     let active = true; setMatches([]); setSelected(null); setData(null);
     if (!kind || !title.trim()) { setState('ready'); return () => { active = false; }; }
@@ -160,14 +161,14 @@ export function AvailabilityPanel({ title, type, links, onLinks, preferred, onPr
     if (target) icons.push({name:link.name,logo:link.logo,url:target.url,mode:target.mode});
   }
   return <section className="availability availability-compact" aria-label="Availability and links">
-    <div className="availability-icon-row" aria-label="Platforms">{icons.map(item=>{
+    <div className="availability-icon-row" aria-label="Platforms">{icons.filter(item=>!showNames||item.mode!=='search').map(item=>{
       const icon=<PlatformIcon name={item.name} logo={item.logo}/>;
-      return item.url?<a key={iconKey(item.name)} href={item.url} target="_blank" rel="noopener noreferrer" title={`${item.mode==='search'?'Search':'Open'} ${item.name}`} aria-label={`${item.mode==='search'?'Search':'Open'} ${item.name} for ${title}`}>{icon}</a>:<button type="button" key={iconKey(item.name)} title={`Add ${item.name} link`} aria-label={`Add a direct ${item.name} link`} onClick={()=>{setDetailsOpen(true);setLabel(item.name);setMessage('Add a direct link below.');}}>{icon}</button>;
+      return item.url?<a key={iconKey(item.name)} href={item.url} target="_blank" rel="noopener noreferrer" title={`${item.mode==='search'?'Search':'Open'} ${item.name}`} aria-label={`${item.mode==='search'?'Search':'Open'} ${item.name} for ${title}`}>{icon}{showNames&&<span>{item.name}</span>}</a>:<button type="button" key={iconKey(item.name)} title={`Add ${item.name} link`} aria-label={`Add a direct ${item.name} link`} onClick={()=>{setDetailsOpen(true);setLabel(item.name);setMessage('Add a direct link below.');}}>{icon}{showNames&&<span>{item.name}</span>}</button>;
     })}<button type="button" className="availability-settings" aria-label="Manage availability and links" aria-expanded={detailsOpen} onClick={()=>setDetailsOpen(value=>!value)} title="Manage availability and links"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div>
     {watchmode && lookupAccount && watchmodeOwner===lookupAccount && watchmode.region===country && watchmode.externalId===selected?.id && watchmode.candidates.some(item=>item.verified === true) && <small>Links provided by <a href="https://www.watchmode.com/" target="_blank" rel="noopener noreferrer">Watchmode</a></small>}
     {!lookupAccount && (kind==='movie'||kind==='tv'||kind==='game') && <small>Sign in under Settings to see platform links.</small>}
-    <div className="availability-status" aria-live="polite">{kind&&country.length===2&&state==='loading'&&<small>Finding platforms…</small>}{state==='error'&&<small>Couldn’t check availability. <button type="button" onClick={()=>setRetry(value=>value+1)}>Try again</button></small>}{kind&&state==='ready'&&!selected&&matches.length>0&&<button type="button" onClick={()=>setDetailsOpen(true)}>Choose the right title</button>}{kind&&state==='ready'&&!selected&&!matches.length&&<small>No matching title found.</small>}</div>
-    {detailsOpen&&<div className="availability-management">
+    <div className="availability-status" aria-live="polite">{kind&&country.length===2&&state==='loading'&&<small>Finding platforms…</small>}{state==='error'&&<small>Couldn’t check availability. <button type="button" onClick={()=>setRetry(value=>value+1)}>Try again</button></small>}{kind&&state==='ready'&&!selected&&matches.length>0&&<button type="button" onClick={()=>setDetailsOpen(true)}>Confirm edition</button>}{kind&&state==='ready'&&!selected&&!matches.length&&<small>No matching title found.</small>}</div>
+    {detailsOpen&&<div className="availability-management" onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setDetailsOpen(false);event.currentTarget.closest('section')?.querySelector<HTMLButtonElement>('.availability-settings')?.focus()}}}><button type="button" className="availability-dismiss" onClick={()=>setDetailsOpen(false)}>Close link and metadata options ×</button>
       {kind&&<label>Region <input aria-label="Availability region, two-letter country code" maxLength={2} value={country} onChange={event=>{const value=event.target.value.toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);setCountry(value);if(value.length===2)try{localStorage.setItem(regionKey,value);window.dispatchEvent(new Event('stillroom-region-change'))}catch{/* preference remains in memory */}}}/></label>}
       {kind&&country.length!==2&&<small>Enter a two-letter country code.</small>}
       {matches.length>0&&!selected&&<div className="availability-matches"><small>Choose the right title</small>{matches.map(match=><button type="button" key={match.id} onClick={()=>{setSelected(match);onPreferred({...match,mediaType:kind!,query:title});}}>{match.title}{match.year?` (${match.year})`:''}</button>)}</div>}

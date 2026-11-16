@@ -13,6 +13,7 @@ type HomeProps = {
   onOpenFocus: () => void;
   onOpenEntry: (entry: Entry) => void;
   onOpenNote: (entry: Entry, noteId: string) => void;
+  onContextMenu?: (ref: { kind: 'entry' | 'note'; entryId: string; noteId?: string }, x: number, y: number) => void;
 };
 
 function greeting(hour: number) {
@@ -39,7 +40,7 @@ export function noteExcerpt(body: string, limit = 140): string {
   return line.length > limit ? `${line.slice(0, limit - 1).trimEnd()}…` : line;
 }
 
-export function HomePage({ entries, history, displayName, loaded, onAdd, onOpenLibrary, onOpenNotes, onOpenFocus, onOpenEntry, onOpenNote }: HomeProps) {
+export function HomePage({ entries, history, displayName, loaded, onAdd, onOpenLibrary, onOpenNotes, onOpenFocus, onOpenEntry, onOpenNote, onContextMenu }: HomeProps) {
   const now = new Date();
   const counts = {
     total: entries.length,
@@ -84,7 +85,7 @@ export function HomePage({ entries, history, displayName, loaded, onAdd, onOpenL
       <div className="home-row-heading"><h2 id="home-continue">Jump back in</h2><button type="button" onClick={onOpenNotes}>All notes</button></div>
       {recent.length > 0
         ? <ul className="note-row">{recent.map(({ entry, note }) =>
-            <li key={entry.id + note.id}><button type="button" className={`note-home ${entry.color}`} onClick={() => onOpenNote(entry, note.id)}>
+            <li key={entry.id + note.id}><button type="button" className={`note-home ${entry.color}`} onClick={() => onOpenNote(entry, note.id)} onContextMenu={event => { event.preventDefault(); onContextMenu?.({ kind: 'note', entryId: entry.id, noteId: note.id }, event.clientX, event.clientY); }}>
               <span className="note-home-wash" aria-hidden="true"/>
               <span className="note-home-type">{entry.type}</span>
               <strong>{note.title || 'Untitled note'}</strong>
@@ -99,7 +100,7 @@ export function HomePage({ entries, history, displayName, loaded, onAdd, onOpenL
       <div className="home-row-heading"><h2 id="home-latest">Recently added</h2><button type="button" onClick={onOpenLibrary}>View all</button></div>
       {latest.length > 0
         ? <ul className="entry-row">{latest.map(entry =>
-            <li key={entry.id}><button type="button" className="entry-home" onClick={() => onOpenEntry(entry)}>
+            <li key={entry.id}><button type="button" className="entry-home" onClick={() => onOpenEntry(entry)} onContextMenu={event => { event.preventDefault(); onContextMenu?.({ kind: 'entry', entryId: entry.id }, event.clientX, event.clientY); }}>
               <span className={`entry-home-cover ${entry.color}`} style={thumbStyle(entry)} aria-hidden="true">{!entry.artworkUrl && entry.title.slice(0, 1).toUpperCase()}</span>
               <strong>{entry.title}</strong>
               <small>{entry.type} · {entry.status}</small>
