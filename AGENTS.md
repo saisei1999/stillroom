@@ -2,6 +2,13 @@
 
 Stillroom is a personal, local-first media library. Preserve the existing library, Notes, Focus, saved views, progress, ratings, artwork and unrelated changes. Read the relevant code and documentation before changing behavior; `docs/watchmode-release-checklist.md`, `docs/availability.md`, and `docs/platform-links-handoff.md` contain integration and recovery context, but verify dated claims against the current implementation. For the current state of uncommitted work, the entry page, panes and autosave, read `docs/handoff-2026-11-16.md` first.
 
+## Linear workflow
+
+- Before starting implementation work, find and read the relevant issue in the Stillroom Linear project (P-PER-42), including its description and existing comments. If the user names an issue, use that issue; otherwise search the project for the matching work. Do not assume a match when the scope is ambiguous.
+- When beginning work, update the issue to the appropriate active status. At each meaningful step, leave a short comment with what changed or was verified, decisions, and the next step; include blockers or failed checks when applicable. Keep updates concise and useful to someone taking over, rather than logging every tool call.
+- When stopping or handing off, comment with the current state, tests, remaining work, and any unpublished changes. Move the issue to the appropriate status only when the work actually meets that status; do not mark unverified or unpublished work complete if publication is part of the issue.
+- If Linear is unavailable or no relevant issue can be identified, continue work that is otherwise authorized, tell the user what could not be tracked, and avoid creating duplicate issues. The user's instructions and the safety and release rules below take precedence.
+
 ## Safety and release
 
 - This repository's GitHub Pages workflow publishes on pushes to `main`. Do not push, merge to `main`, deploy a Supabase function, change production settings, or perform destructive operations without explicit user authorization for that action. The user's current instructions take precedence over stale handoff notes. Never force-push, reset, or discard uncommitted work without authorization.
