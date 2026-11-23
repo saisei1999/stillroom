@@ -1,6 +1,7 @@
 import { isValidRating } from './rating';
 import { parseProgress } from './progress';
 import { parseChosenMatch, parsePersonalLinks } from './availability';
+import { emptyWishlist, parseWishlistData, WISHLIST_MAX_BYTES, type WishlistData } from './wishlist';
 /**
  * Local-first persistence for Stillroom.
  *
@@ -11,6 +12,7 @@ import { parseChosenMatch, parsePersonalLinks } from './availability';
  *   `account_meta`, `account_conflicts`, `account_backups`, `account_mutations`.
  * - v3 manifest: a small record of every account that has a cache on this
  *   device, so scheduled work can find pending accounts after a reload.
+ * - v4 Wishlist: a local collection with its own records and no account sync.
  *
  * Upgrades are explicit (`MIGRATIONS`), tested against fixtures, and never
  * drop an object store. Every change to a library is written together with its
@@ -22,6 +24,8 @@ export type { Entry };
 
 const DB = 'stillroom-library';
 const LOCAL_STORE = 'entries';
+const WISHLIST_STORE = 'wishlist';
+const WISHLIST_KEY = 'collection';
 export const ACCOUNT_ENTRIES = 'account_entries';
 export const ACCOUNT_OUTBOX = 'account_outbox';
 export const ACCOUNT_META = 'account_meta';
@@ -29,7 +33,7 @@ export const ACCOUNT_CONFLICTS = 'account_conflicts';
 export const ACCOUNT_BACKUPS = 'account_backups';
 export const ACCOUNT_MUTATIONS = 'account_mutations';
 const MANIFEST_STORE = 'sync_manifest';
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 let opening: Promise<IDBDatabase> | undefined;
 
@@ -54,11 +58,16 @@ const MIGRATIONS: Record<number, Migration> = {
   3: (database) => {
     if (!database.objectStoreNames.contains(MANIFEST_STORE)) database.createObjectStore(MANIFEST_STORE, { keyPath: 'accountId' });
   },
+  // v4: Wishlist is separate. Existing Product entries stay in entries.
+  4: (database) => {
+    database.createObjectStore(WISHLIST_STORE);
+  },
 };
 
 function db(): Promise<IDBDatabase> {
   return (opening ??= new Promise((resolve, reject) => {
     const request = indexedDB.open(DB, SCHEMA_VERSION);
+    let blocked = false;
     request.onupgradeneeded = (event) => {
       const database = request.result;
       const transaction = request.transaction;
@@ -68,14 +77,24 @@ function db(): Promise<IDBDatabase> {
     };
     request.onsuccess = () => {
       const database = request.result;
-      database.onversionchange = () => database.close();
+      if (blocked) {
+        database.close();
+        return;
+      }
+      const connection = opening;
+      database.onversionchange = () => {
+        database.close();
+        if (opening === connection) opening = undefined;
+      };
       resolve(database);
     };
     request.onerror = () => {
+      if (blocked) return;
       opening = undefined;
       reject(request.error ?? new Error('Local storage could not be opened.'));
     };
     request.onblocked = () => {
+      blocked = true;
       opening = undefined;
       reject(new Error('Storage is blocked by another open tab. Close other Stillroom tabs and try again.'));
     };
@@ -217,7 +236,7 @@ const STATUSES = new Set(['On my radar', 'Planned', 'In progress', 'Completed', 
 const COLORS = new Set(['blue', 'ochre', 'rose', 'slate', 'violet', 'teal']);
 
 /** Rebuilds a trusted Entry from untrusted data, or returns undefined. Shared with sync validation. */
-export function sanitizeEntry(value: unknown): Entry | undefined {
+export function sanitizeEntry(value: unknown, { combinedBackup = false } = {}): Entry | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const raw = value as Record<string, unknown>;
   const string = (key: string, max: number): string | undefined => {
@@ -230,12 +249,15 @@ export function sanitizeEntry(value: unknown): Entry | undefined {
   const status = string('status', 40);
   const color = string('color', 40);
   const progress = string('progress', 200);
-  const notes = string('notes', 50000);
+  // The combined format has a file limit. Local editors do not cap note bodies or tags.
+  const noteLimit = combinedBackup ? Infinity : 50_000;
+  const notes = string('notes', noteLimit);
   const createdAt = string('createdAt', 40);
   if (!id || !id.trim() || !title || !title.trim() || !type || !status || !color || progress === undefined || notes === undefined || !createdAt) return undefined;
   if (!TYPES.has(type) || !STATUSES.has(status) || !COLORS.has(color)) return undefined;
   const tags = raw.tags;
-  if (!Array.isArray(tags) || tags.length > 100 || !tags.every((tag) => typeof tag === 'string' && tag.length > 0 && tag.length <= 60)) return undefined;
+  if (!Array.isArray(tags) || (!combinedBackup && tags.length > 100) ||
+      !tags.every((tag) => typeof tag === 'string' && tag.length > 0 && (combinedBackup || tag.length <= 60))) return undefined;
   const rating = raw.rating == null ? undefined : raw.rating;
   if (rating !== undefined && !isValidRating(rating)) return undefined;
   const optional: Pick<Entry, 'productUrl' | 'price' | 'priority' | 'artworkUrl'> = {};
@@ -254,7 +276,7 @@ export function sanitizeEntry(value: unknown): Entry | undefined {
   if (raw.personalLinks !== undefined && !personalLinks) return undefined;
   const availabilityMatch = raw.availabilityMatch === undefined ? undefined : parseChosenMatch(raw.availabilityMatch);
   if (raw.availabilityMatch !== undefined && !availabilityMatch) return undefined;
-  if (noteSections !== undefined && (!Array.isArray(noteSections) || noteSections.length > 500 || !noteSections.every(section => section && typeof section === 'object' && typeof section.id === 'string' && section.id.length > 0 && section.id.length <= 200 && typeof section.title === 'string' && section.title.length <= 120 && typeof section.body === 'string' && section.body.length <= 50000))) return undefined;
+  if (noteSections !== undefined && (!Array.isArray(noteSections) || noteSections.length > 500 || !noteSections.every(section => section && typeof section === 'object' && typeof section.id === 'string' && section.id.length > 0 && section.id.length <= 200 && typeof section.title === 'string' && section.title.length <= 120 && typeof section.body === 'string' && section.body.length <= noteLimit))) return undefined;
   return {
     id,
     title,
@@ -275,15 +297,12 @@ export function sanitizeEntry(value: unknown): Entry | undefined {
   };
 }
 
-export function parseBackup(text: string): Entry[] {
-  const raw: unknown = JSON.parse(text);
-  if (!raw || typeof raw !== 'object') throw new Error('Invalid backup');
-  const data = raw as Record<string, unknown>;
-  if (data.format !== 'stillroom' || ![1, 2].includes(data.version as number) || !Array.isArray(data.entries) || data.entries.length > 10000) throw new Error('Unsupported backup');
+function parseBackupEntries(value: unknown, combinedBackup = false): Entry[] {
+  if (!Array.isArray(value) || value.length > 10_000) throw new Error('Invalid library entries.');
   const ids = new Set<string>();
   const entries: Entry[] = [];
-  for (const value of data.entries) {
-    const entry = sanitizeEntry(value);
+  for (const raw of value) {
+    const entry = sanitizeEntry(raw, { combinedBackup });
     if (!entry || ids.has(entry.id)) throw new Error('Invalid entry');
     ids.add(entry.id);
     entries.push(entry);
@@ -291,11 +310,102 @@ export function parseBackup(text: string): Entry[] {
   return entries;
 }
 
+export const LOCAL_BACKUP_MAX_BYTES = 64 * 1024 * 1024;
+export type LocalBackup = { entries: Entry[]; wishlist?: WishlistData };
+
+function readBackupEnvelope(text: string): Record<string, unknown> {
+  const raw: unknown = JSON.parse(text);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid backup.');
+  const data = raw as Record<string, unknown>;
+  if (data.format !== 'stillroom') throw new Error('Unsupported backup.');
+  return data;
+}
+
+export function parseBackup(text: string): Entry[] {
+  const data = readBackupEnvelope(text);
+  if (![1, 2].includes(data.version as number) || 'wishlist' in data) throw new Error('Unsupported backup.');
+  return parseBackupEntries(data.entries);
+}
+
+function validatedWishlist(value: unknown): WishlistData {
+  const data = parseWishlistData(value);
+  if (new Blob([JSON.stringify(data)]).size > WISHLIST_MAX_BYTES) {
+    throw new Error('Wishlist storage is full. Remove unused images or items and try again.');
+  }
+  return data;
+}
+
+export function parseLocalBackup(text: string): LocalBackup {
+  if (new Blob([text]).size > LOCAL_BACKUP_MAX_BYTES) throw new Error('Backup exceeds 64 MiB.');
+  const data = readBackupEnvelope(text);
+  if (data.version === 3) {
+    return { entries: parseBackupEntries(data.entries, true), wishlist: validatedWishlist(data.wishlist) };
+  }
+  if (![1, 2].includes(data.version as number) || 'wishlist' in data) throw new Error('Unsupported backup.');
+  return { entries: parseBackupEntries(data.entries) };
+}
+
+async function readWishlist(store: IDBObjectStore): Promise<WishlistData> {
+  const data = await getOne<unknown>(store, WISHLIST_KEY);
+  return data === undefined ? emptyWishlist() : parseWishlistData(data);
+}
+
+export function loadWishlist(): Promise<WishlistData> {
+  return runTransaction([WISHLIST_STORE], 'readonly', (tx) => readWishlist(tx.objectStore(WISHLIST_STORE)));
+}
+
+/** Read and edit the latest collection in one transaction, even across tabs.
+ * The callback is synchronous. Change only the draft and return before doing other work.
+ */
+export function updateWishlist(edit: (draft: WishlistData) => undefined | WishlistData): Promise<WishlistData> {
+  return runTransaction([WISHLIST_STORE], 'readwrite', async (tx) => {
+    const store = tx.objectStore(WISHLIST_STORE);
+    const draft = await readWishlist(store);
+    const next = validatedWishlist(edit(draft) ?? draft);
+    store.put(next, WISHLIST_KEY);
+    return next;
+  });
+}
+
+export async function exportLocalBackup(): Promise<Blob> {
+  const [entries, wishlist] = await runTransaction([LOCAL_STORE, WISHLIST_STORE], 'readonly', (tx) =>
+    Promise.all([
+      getAllRequest<Entry>(tx.objectStore(LOCAL_STORE)),
+      readWishlist(tx.objectStore(WISHLIST_STORE)),
+    ]),
+  );
+  parseBackupEntries(entries, true);
+  const text = JSON.stringify({
+    format: 'stillroom', version: 3, exportedAt: new Date().toISOString(), entries, wishlist,
+  });
+  const backup = new Blob([text], { type: 'application/json' });
+  if (backup.size > LOCAL_BACKUP_MAX_BYTES) throw new Error('Backup exceeds 64 MiB.');
+  return backup;
+}
+
+function writeEntries(store: IDBObjectStore, entries: Entry[]): void {
+  store.clear();
+  for (const entry of entries) store.put(entry);
+}
+
+/** Call only after previewing the parsed backup and confirming replacement. */
+export async function restoreLocalBackup(backup: LocalBackup): Promise<Entry[]> {
+  const entries = parseBackupEntries(backup.entries, backup.wishlist !== undefined);
+  if (backup.wishlist === undefined) {
+    await replaceEntries(entries);
+    return entries;
+  }
+  const wishlist = validatedWishlist(backup.wishlist);
+  await runTransaction([LOCAL_STORE, WISHLIST_STORE], 'readwrite', (tx) => {
+    writeEntries(tx.objectStore(LOCAL_STORE), entries);
+    tx.objectStore(WISHLIST_STORE).put(wishlist, WISHLIST_KEY);
+  });
+  return entries;
+}
+
 export function replaceEntries(entries: Entry[]): Promise<void> {
   return runTransaction([LOCAL_STORE], 'readwrite', (transaction) => {
-    const store = transaction.objectStore(LOCAL_STORE);
-    store.clear();
-    for (const entry of entries) store.put(entry);
+    writeEntries(transaction.objectStore(LOCAL_STORE), entries);
   }).then(() => undefined);
 }
 

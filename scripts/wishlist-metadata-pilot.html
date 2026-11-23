@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src https://testingurl.dev; connect-src 'self'; base-uri 'none'; form-action 'self'">
+<title>Wishlist metadata pilot</title>
+<style>
+  :root { font: 100%/1.5 system-ui, sans-serif; color: #16333d; background: #eef4f5; }
+  body { max-width: 36rem; margin: 3rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.5rem; }
+  label { display: block; font-weight: 650; margin-bottom: .4rem; }
+  .input-row { display: flex; gap: .5rem; }
+  input { min-width: 0; flex: 1; padding: .65rem; border: 1px solid #8ca8ad; border-radius: .5rem; font: inherit; }
+  button { padding: .65rem .9rem; color: #fff; background: #235567; border: 0; border-radius: .5rem; font: inherit; }
+  a { color: #215466; overflow-wrap: anywhere; }
+  :focus-visible { outline: 2px solid #276580; outline-offset: 3px; }
+  article { padding: 1rem; border: 1px solid #a7bdc1; border-radius: .8rem; background: white; }
+  img { display: block; width: 100%; max-width: 18rem; height: auto; margin-bottom: .7rem; border-radius: .4rem; }
+  [hidden] { display: none; }
+  p { margin: .65rem 0; }
+</style>
+<main>
+  <h1>Wishlist metadata pilot</h1>
+  <form id="capture">
+    <label for="product-url">Product URL</label>
+    <div class="input-row">
+      <input id="product-url" name="url" type="url" required maxlength="4000" placeholder="https://">
+      <button>Add</button>
+    </div>
+  </form>
+  <p><a href="https://testingurl.dev/scraping/ecommerce/product/1" target="_blank" rel="noreferrer">Supported test product</a></p>
+  <p id="status" role="status"></p>
+  <article id="preview" hidden>
+    <img id="product-image" alt="" hidden referrerpolicy="no-referrer">
+    <a id="product-title" target="_blank" rel="noreferrer"></a>
+  </article>
+</main>
+<script>
+  const form = document.getElementById('capture');
+  const input = document.getElementById('product-url');
+  const status = document.getElementById('status');
+  const card = document.getElementById('preview');
+  const title = document.getElementById('product-title');
+  const image = document.getElementById('product-image');
+  let current;
+
+  input.addEventListener('paste', (event) => {
+    const pasted = event.clipboardData.getData('text/plain').trim();
+    if (!/^https?:\/\/\S+$/i.test(pasted) || pasted.length > input.maxLength) return;
+    event.preventDefault();
+    input.value = pasted;
+    form.requestSubmit();
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const url = input.value.trim();
+    let parsed;
+    try {
+      parsed = new URL(url);
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error();
+    } catch {
+      status.textContent = 'Enter a valid product URL.';
+      return;
+    }
+
+    current?.abort();
+    const lookup = new AbortController();
+    current = lookup;
+    title.href = parsed.href;
+    title.textContent = parsed.hostname;
+    image.hidden = true;
+    image.removeAttribute('src');
+    card.hidden = false;
+    status.textContent = 'Looking up product details…';
+    try {
+      const response = await fetch('/metadata', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url}),
+        credentials: 'omit',
+        signal: AbortSignal.any([lookup.signal, AbortSignal.timeout(12000)]),
+      });
+      const result = await response.json();
+      if (current !== lookup) return;
+      if (response.ok) {
+        if (result.title) title.textContent = result.title;
+        if (result.image) {
+          image.src = result.image;
+          try {
+            await image.decode();
+            if (current === lookup) image.hidden = false;
+          } catch {
+            // The product link and title are usable without the image.
+          }
+        }
+        if (current === lookup) {
+          status.textContent = result.title || !image.hidden ? 'Product details loaded.' : 'Product details unavailable.';
+        }
+      } else if (result.status === 'unsupported_url') {
+        status.textContent = 'This link opens the product page. Automatic details are limited to the test product.';
+      } else {
+        status.textContent = 'Product details unavailable. The link is ready.';
+      }
+    } catch {
+      if (current === lookup) status.textContent = 'Product details unavailable. The link is ready.';
+    }
+  });
+</script>
+</html>

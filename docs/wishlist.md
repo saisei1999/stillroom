@@ -1,6 +1,6 @@
 # Wishlist and recurring purchases
 
-Status: owner-confirmed product scope, 2026-11-22. Implementation has not started.
+Status: owner-confirmed product scope, 2026-11-22. PER-64 implements the local storage and backup foundation.
 Tracking: [PER-52](https://linear.app/halcyonnetwork/issue/PER-52/wishlist-and-recurring-purchases).
 This document is the product source of truth; linked Linear issues track delivery.
 
@@ -19,6 +19,8 @@ Keep local-first use available without an account. Preserve the existing library
 - Status: Considering, Want, Purchased, Archived. Priority: None, Low, Medium, High; new items start at None.
 - Use focused properties initially. Arbitrary user-created database columns are future scope.
 
+PER-65 starts manually added items at Considering with no priority. Adding from a single group preselects that group. All items and Ungrouped start with no memberships. A named saved view stores the current gallery or table layout, filters, sort order and grouping. Group and tag sections can show the same item more than once, but each edit updates its shared record. A price sort keeps currencies separate and puts unknown prices last.
+
 ## Instant clipboard capture
 
 On Wishlist, Ctrl+V outside a text editor immediately saves compatible content:
@@ -28,6 +30,14 @@ On Wishlist, Ctrl+V outside a text editor immediately saves compatible content:
 - Plain text: use the text as the name; add offers later.
 
 Pasting inside editable fields keeps normal editing behavior. Provide Undo for a newly captured item. A URL already saved reveals the existing item instead of creating another, and adds the current group membership where appropriate. Preserve meaningful variant identifiers during duplicate detection. Do not silently merge similar-looking products or different offers.
+
+**+ Add item** starts with an optional Product link field. A product link alone is enough to save. It becomes the primary offer, and the item uses the merchant hostname until a name is entered or available from clipboard metadata. The Image URL is a separate optional field. Clipboard capture starts at Considering with no priority, inherits a single selected group, and otherwise saves to Ungrouped. A pasted image uses the same embedded image format and 1 MiB limit as backups. For long or multiline text, the first line (up to 300 characters) becomes the name and the full text goes into notes, up to 50,000 characters.
+
+Duplicate checks normalize HTTPS and HTTP links using the browser URL parser and retain the scheme, path, query parameters and fragment. This preserves variant identity even when merchants encode it differently. Capture checks the latest saved offers before adding an item or group membership. Undo applies to the latest newly captured item in the current Wishlist session. It removes the item only if it still matches what was captured, with or without a title supplied by the clipboard.
+
+Submitting a duplicate from **+ Add item** keeps the draft open and the saved item intact. The user can change the link and keep editing, or explicitly discard the draft and open the saved item. Clipboard duplicates still reveal the item and add the selected group where applicable.
+
+PER-66 saves the link before applying any title supplied in clipboard HTML. The title can fill an untouched placeholder. PER-67 and PER-69 cover merchant lookup feasibility and fetching remote metadata.
 
 Lookup failure never blocks capture. Empty, loading, failed, unsupported, and offline enrichment states must remain usable and allow manual editing. Clipboard capture is initiated by paste, not continuous clipboard polling.
 
@@ -45,7 +55,9 @@ Refresh on capture and when opening an item with a stale observation. USD is the
 
 Country and postal code are optional for shipping estimates. Store them locally; a full address is not required. Disclose when destination information needs to be sent to a lookup service. Missing or unreliable estimates remain Unknown and can be entered manually.
 
-No paid metadata or shopping-search subscriptions initially. Merchant coverage, technical feasibility, source permissions, rate limits, and a free-service approach need investigation before committing to specific automatic coverage. No lookup service or new backend has been approved by this spec.
+Use one shared product-page fetcher and parser for eligible merchant URLs. Read standard page metadata for title and image, and use a structured offer only when it matches the linked product and variant. Shipping cost and arrival remain Unknown unless the same offer provides them for the relevant destination. Saving a link and editing its fields work independently of the fetch.
+
+The first version uses a single extraction path across storefronts, with no requirement for merchant-specific APIs or paid subscriptions. PER-67 validates source permissions, network access, coverage, and rate limits. A new hosted service, browser extension, or transmission of destination data would need a separate decision.
 
 ## Recurring purchases
 
@@ -67,6 +79,14 @@ Use this as modeling guidance, not an approved storage schema:
 - Purchase event: historical purchase facts, independent of current advertised prices.
 
 Keep storage validation/migrations, URL normalization, enrichment, and date calculations testable independently of React. Version and validate backups for all Wishlist records, including a defined persistence/export strategy for pasted images. Older backups must remain readable without changing the owner's existing media records.
+
+### Storage and backup decisions (PER-64)
+
+- IndexedDB schema v4 adds a Wishlist store. Media and account records stay in their existing stores. Local Wishlist writes validate the complete collection in a single transaction, including item memberships, saved view references, and primary offer selection. Concurrent updates read the latest committed collection. Each domain record has a stable ID. Offers, purchase events and recurrence settings live with their item.
+- Legacy Product entries stay in the media library, including their original IDs, links, free-text prices, priorities and notes. The migration copies no entries into Wishlist. Any future explicit conversion can use the original source fields and prompt for ambiguous status, price or currency.
+- Pasted PNG, JPEG, GIF, WebP and AVIF images can be saved as embedded base64 bytes in the item and its JSON backup. Input is limited to 1 MiB per image and 32 MiB for the encoded Wishlist collection. Larger images need to be resized before capture. Remote image URLs remain references. Images can be displayed from their stored data across reloads without depending on temporary object URLs.
+- Settings exports a combined version 3 JSON backup. Restoring v3 replaces both the local library and Wishlist atomically after validation and confirmation. Restoring v1 or v2 replaces the media library and keeps the current Wishlist. Export and restore share a 64 MiB file limit.
+- Clients using IndexedDB v3 cannot open a library upgraded to v4. Clients expecting backup versions 1 and 2 reject combined v3 backups. Keep a pre-upgrade backup when testing any older build.
 
 ## Acceptance criteria
 
@@ -100,7 +120,6 @@ Resolve and document before implementing the relevant area:
 
 - Representative merchants and tested extraction coverage; permitted fetching architecture, network protections, caching, limits, and destination-data disclosure.
 - Staleness interval, observation-failure treatment, and variant/URL canonicalization rules.
-- Image persistence/export strategy and non-destructive legacy Product compatibility.
 - Undo behavior when edits or asynchronous enrichment race with capture.
 - Default initial status, Due soon window, month-end date rules, snooze calculation, and archive/resume semantics.
 
