@@ -11,7 +11,7 @@ Stillroom is a local-first personal home for games, movies, TV/anime, manga, boo
 - Export and restore a versioned JSON backup. Remote artwork is referenced, not bundled; individual Markdown export and richer asset portability remain future work.
 
 ## Boundaries
-Wishlist is a separate future domain, not a wholesale merge of the old prototype. Social feeds, recommendations, native apps, live Obsidian sync and a generic schema builder are out of scope for this milestone. Do not invent metadata or totals.
+Wishlist is an owner-approved separate domain, specified in [Wishlist and recurring purchases](wishlist.md); it is planned, not implemented. It preserves the existing media library rather than merging the old prototype wholesale. Social feeds, recommendations, native apps, live Obsidian sync and a generic schema builder are out of scope for this milestone. Do not invent metadata or totals.
 
 ## Release checks
 Validate local data, backups, Notes, Focus and optional sync; test keyboard, touch, narrow screens and reduced motion. Confirm provider rights, attribution and region behavior. Deployment and account-sync activation require separate approval; see `watchmode-release-checklist.md`.
